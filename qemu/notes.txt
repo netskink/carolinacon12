@@ -1,0 +1,10 @@
+
+These are my notes I used for doing arm.  It appears the qemu for arch prebuilt does not support arm.
+
+These are the guides I used:
+
+https://en.wikibooks.org/wiki/QEMU
+
+http://opensourceforu.efytimes.com/2011/06/qemu-for-embedded-systems-development-part-1/
+
+
