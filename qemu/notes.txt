@@ -1,6 +1,9 @@
 
 These are my notes I used for doing arm.  It appears the qemu for arch prebuilt does not support arm.
 
+I did a clone of qemu in this dir and used the doit.sh script to build qemu for i386 and arm support.
+Basically do a configure, make and sudo make install.
+
 These are the guides I used:
 
 https://en.wikibooks.org/wiki/QEMU
