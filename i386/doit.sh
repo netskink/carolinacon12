@@ -1,5 +1,14 @@
 #!/bin/bash
 
+# Rather than build seperate scripts, this is one big script
+# with stages.  Its pretty simple, uncomment out the making of 
+# a disk image and the exit to stop the script at that stage.
+# When that is done, readd the comments and uncomment the next step. 
+# Repeat.
+
+# There was a lot of stuff I was trying and its left in here
+# so I can resume it later.
+
 # make a disk image
 #qemu-img create -f qcow hda.img 10G
 #exit
