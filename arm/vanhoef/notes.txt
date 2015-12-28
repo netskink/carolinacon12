@@ -1,0 +1,4 @@
+I'm using this guys work as a guide.
+Mathy VanHoef
+http://www.mathyvanhoef.com/2013/12/reversing-and-exploiting-arm-binaries.html
+

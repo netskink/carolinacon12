@@ -1,0 +1,7 @@
+http://www.mathyvanhoef.com/2013/12/reversing-and-exploiting-arm-binaries.html
+
+http://releases.linaro.org/components/toolchain/binaries/latest-5.2/
+
+http://www.linaro.org/downloads/
+
+
