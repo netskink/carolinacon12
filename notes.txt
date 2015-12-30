@@ -1,2 +1,8 @@
 This is the notes I kept while preparing for the talk.
 
+The work for each architecture is in the individual architecture dirs.
+ie. i386 for 32-bit and arm for ARM processors.
+
+Networking is contains instructions on setting up virtual networks.
+
+

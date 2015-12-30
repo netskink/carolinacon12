@@ -1,0 +1,32 @@
+Add a bridge
+brctl addbr br0
+
+Remove a bridge
+ifconfig br0 down
+(archlinux does not use ifconfig, do this instead)
+ip link set down br0
+brctl delbr br0
+(alternatively,)
+brctl delif br0 eth0
+ifconfig br0 down
+brctl delbr br0
+
+The arm uses smsc911x and not e1000
+
+This did not work on arm but did work on i386
+brctl addbr br0
+ip addr add 172.16.0.1/24 broadcast 172.16.0.255 dev br0
+ip link set br0 up
+ip tuntap add dev tap0 mode tap
+ip link set tap0 up promisc on
+brctl addif br0 tap0
+dnsmasq --interface=br0 --bind-interfaces --dhcp-range=172.16.0.10,172.16.0.20
+
+This works for intel, not sure why the interface does not work in arm.
+(Update 2015/12/30 - Now it works for host only networking.  See the do_networking.sh scripts
+in this git checkin)
+
+you can use
+$ qemu-system-arm -M vexpress-a9 -device \? 2> mydevices.txt
+Then edit the file and search for network devices.
+

@@ -10,7 +10,8 @@
 
 # This starts a debian installer.  It took about 1.5 hours to install
 # on a core2duo
-#qemu-system-arm -M vexpress-a9 -kernel vmlinuz-3.2.0-4-vexpress -initrd initrd.gz -append "root=/dev/mmcblk0" -drive if=sd,cache=unsafe,file=hda.img
+#qemu-system-arm -M vexpress-a9 -kernel vmlinuz-3.2.0-4-vexpress -initrd initrd.gz \
+#-append "root=/dev/mmcblk0" -drive if=sd,cache=unsafe,file=hda.img 
 
 # copy the instal iamge result to a new rootfs
 #mkdir mountdir
@@ -35,4 +36,41 @@
 #sudo umount mountdir/
 
 # boot the installed image
-qemu-system-arm -M vexpress-a9 -kernel vmlinuz-3.2.0-4-vexpress -initrd initrd.img-3.2.0-4-vexpress -append "root=/dev/mmcblk0p2" -drive if=sd,cache=unsafe,file=hda.img
+# sudo qemu-system-arm -M vexpress-a9 -kernel vmlinuz-3.2.0-4-vexpress -initrd initrd.img-3.2.0-4-vexpress -append "root=/dev/mmcblk0p2" -drive if=sd,cache=unsafe,file=hda.img
+
+
+# boot the installed image wih network bridge
+# Below here are the last set of attempts to get
+# host only networking working.  None of these worked.
+
+
+# This does not work
+#sudo qemu-system-arm -M vexpress-a9 -kernel vmlinuz-3.2.0-4-vexpress \
+#-initrd initrd.img-3.2.0-4-vexpress -append "root=/dev/mmcblk0p2" \
+#-drive if=sd,cache=unsafe,file=hda.img \
+#-net nic,macaddr=00:16:3e:00:00:02 -net tap,script=no,downscript=no
+
+# This is from vanhoef, but it does not work.
+#sudo qemu-system-arm -M vexpress-a9 -kernel vmlinuz-3.2.0-4-vexpress \
+#-initrd initrd.img-3.2.0-4-vexpress -append "root=/dev/mmcblk0p2" \
+#-drive if=sd,cache=unsafe,file=hda.img \
+#-net nic -net tap,ifname=qtap0,script=no,downscript=no
+
+
+# This is the model used for i386 which does work
+#sudo qemu-system-arm -M vexpress-a9 -kernel vmlinuz-3.2.0-4-vexpress \
+#-initrd initrd.img-3.2.0-4-vexpress -append "root=/dev/mmcblk0p2" \
+#-drive if=sd,cache=unsafe,file=hda.img \
+#-netdev tap,id=t0,ifname=tap0,script=no,downscript=no \
+#-device virtio-net-device,netdev=t0,id=nic0
+
+# This is using the method which worked for fedora.
+# !!!
+# And it works for this image.
+# !!!!!
+sudo qemu-system-arm -M vexpress-a9 -kernel vmlinuz-3.2.0-4-vexpress \
+-initrd initrd.img-3.2.0-4-vexpress -append "root=/dev/mmcblk0p2" \
+-drive if=sd,cache=unsafe,file=hda.img \
+-net nic,vlan=0 -net tap,vlan=0,ifname=tap0,script=no
+
+

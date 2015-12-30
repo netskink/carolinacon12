@@ -2,3 +2,8 @@ I'm using this guys work as a guide.
 Mathy VanHoef
 http://www.mathyvanhoef.com/2013/12/reversing-and-exploiting-arm-binaries.html
 
+It took forever to get host only networking to work, but it does work.  I
+am not connected to a network with eth0, just wifi.  The tap/bridge is
+not connected to the eth0 or wifi0 so I can ssh between the host and vm
+but not get to the internet.
+
