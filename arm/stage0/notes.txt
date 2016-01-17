@@ -1,0 +1,33 @@
+I'm using this guys work as a guide.
+Mathy VanHoef
+http://www.mathyvanhoef.com/2013/12/reversing-and-exploiting-arm-binaries.html
+
+It took forever to get host only networking to work, but it does work.  I
+am not connected to a network with eth0, just wifi.  The tap/bridge is
+not connected to the eth0 or wifi0 so I can ssh between the host and vm
+but not get to the internet.
+
+I'm using gdb like so:
+
+$ gdb -tui ./buffer_overflow
+
+So, in gdb I can see it trying to call the vulernable function
+using their technique but it fails due to stack protection.
+
+Here are some notes regarding that
+This has info on how to set the kernel memory pages for ASLR.  This is for x86_64
+so this will come in handy when I do that arch.  I did try to set this flag for 
+arm but it did not help.
+http://stackoverflow.com/questions/2340259/how-to-turn-off-gcc-compiler-optimization-to-enable-buffer-overflow
+
+I went back to the x86 32ibit and recompiled the code with no stack protection.
+See here -fno-stack-protector and -z execstack
+
+Afterwards it still failed even though the checks on this page did show the stack as
+being executable:
+
+https://www.win.tue.nl/~aeb/linux/hh/protection.html
+
+I installed pax-utils to get scanelf installed on arm to see what that showed.
+and it showed the stack as executable as well.
+
