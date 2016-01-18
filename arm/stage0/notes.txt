@@ -31,3 +31,8 @@ https://www.win.tue.nl/~aeb/linux/hh/protection.html
 I installed pax-utils to get scanelf installed on arm to see what that showed.
 and it showed the stack as executable as well.
 
+Another source
+http://fluxius.handgrep.se/2011/10/20/the-art-of-elf-analysises-and-exploitations/
+
+Yet another
+http://static.googleusercontent.com/media/www.zynamics.com/en//downloads/kornau-tim--diplomarbeit--rop.pdf

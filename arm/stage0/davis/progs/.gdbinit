@@ -25,6 +25,18 @@ set args "AAAABBBBCCCC" > outfile.txt
 #
 # Okay I stand corrected.  It worked the last time.
 focus cmd
+layout asm
+layout reg
+layout next
+layout next
+layout next
+layout next
+layout next
+winheight reg +5
+winheight reg -1
+run
+winheight reg +1
+run
 
 
 # override pretty print settings

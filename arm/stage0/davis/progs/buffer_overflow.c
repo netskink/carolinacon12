@@ -13,9 +13,12 @@ void vulnerable(char *arg) {
 }
 
 int main(int argc, char **argv) {
+
+#ifdef NORMAL
+	NeverCalled(); 
+#else
 	vulnerable(argv[1]);
-	// to not clutter up the -tui option
-	// run this code with (gdb) run > out.txt
+#endif
 	printf("argv[1] = %s\n", argv[1]);
 
 	return(0);

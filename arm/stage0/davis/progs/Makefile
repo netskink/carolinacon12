@@ -1,15 +1,36 @@
 # very simple makefile
 
-all: simpleprog buffer_overflow
+CC = gcc
 
-simpleprog: simpleprog.c
-	gcc -fno-stack-protector -z execstack -O0 -ggdb simpleprog.c -o simpleprog
+DEFINES = -DNORMAL
+C_FLAGS = $(DEFINES) -fno-stack-protector -z execstack -O0 -ggdb 
+L_FLAGS = -ggdb 
 
-buffer_overflow: buffer_overflow.c
-	gcc -fno-stack-protector -z execstack -O0 -ggdb buffer_overflow.c -o buffer_overflow
+.PHONY: default all clean
+
+
+default: simpleprog buffer_overflow
+all: default
+
+# OBJECTS is all .c files renamed as .o
+OBJECTS = $(patsubst %.c, %.o, $(wildcard *.c))
+
+HEADERS = $(wildcard *.h)
+
+%.o: %.c $(HEADERS)
+	$(CC)  $(C_FLAGS) -c $< -o $@
+
+.PRECIOUS: buffer_overflow simpleprog $(OBJECTS)
+
+simpleprog: simpleprog.o
+	$(CC) $(L_FLAGS) -o $@ $<
+
+buffer_overflow: buffer_overflow.o
+	$(CC) $(L_FLAGS) -o $@ $<
 
 clean:
-	rm simpleprog
-	rm buffer_overflow
+	-rm -f *.o
+	-rm simpleprog
+	-rm buffer_overflow 
 
 
