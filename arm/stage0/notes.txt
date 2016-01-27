@@ -1,4 +1,8 @@
-I'm using this guys work as a guide.
+I'm using these papers as guide
+
+the pdf name for the other one
+https://www.exploit-db.com/docs/24493.pdf
+
 Mathy VanHoef
 http://www.mathyvanhoef.com/2013/12/reversing-and-exploiting-arm-binaries.html
 
@@ -36,3 +40,6 @@ http://fluxius.handgrep.se/2011/10/20/the-art-of-elf-analysises-and-exploitation
 
 Yet another
 http://static.googleusercontent.com/media/www.zynamics.com/en//downloads/kornau-tim--diplomarbeit--rop.pdf
+
+demo objdump -D foo.exe
+
