@@ -6,3 +6,7 @@ ie. i386 for 32-bit and arm for ARM processors.
 Networking is contains instructions on setting up virtual networks.
 
 
+References
+http://www.cs.umd.edu/class/fall2012/cmsc498L/materials/vuln-lab.shtml
+https://www.eecis.udel.edu/~bmiller/cis459/2007s/readings/buff-overflow.html
+http://insecure.org/stf/smashstack.html
