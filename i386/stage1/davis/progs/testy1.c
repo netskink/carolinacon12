@@ -62,7 +62,7 @@ void put_wisdom(void) {
 	  return;
 	}
 
-	//r = (int) gets(wis);
+	r = (int) gets(wis);
 	if (r == 0)
 	  return;
 

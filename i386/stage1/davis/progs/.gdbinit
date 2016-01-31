@@ -19,10 +19,12 @@
 # setups for specific programs
 #
 # args for bufferoverflow.c
+#break main
 #set args "AAAABBBBCCCC" > outfile.txt
 #
 # setup for testy1
 file testy1
+break 107
 
 
 
@@ -32,10 +34,10 @@ file testy1
 #
 # Okay I stand corrected.  It worked the last time.
 focus cmd
-layout asm
-layout reg
-layout next
-winheight reg +5
+#layout asm
+#layout reg
+#layout next
+#winheight reg +5
 #run
 #winheight reg +1
 #run
@@ -82,7 +84,6 @@ set print entry-values compact
 
 
 
-break main
 
 
 # On the debian vm, this will be the second virt term

