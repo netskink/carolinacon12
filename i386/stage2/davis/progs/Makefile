@@ -55,6 +55,9 @@ testy1: testy1.o
 testya1.o: testya1.asm
 	nasm -felf testya1.asm
 
+testya2.o: testya2.asm
+	nasm -felf testya2.asm
+
 shell: shell.asm
 	nasm -felf shell.asm
 
