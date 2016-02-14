@@ -30,7 +30,7 @@ L_FLAGS = $(L_FLAGS_0) $(L_FLAGS_1)
 .PHONY: default all clean test stripdebug stripall
 
 
-default: simpleprog buffer_overflow shell testy1 testya1.o
+default: simpleprog buffer_overflow shell testy1 testya1.o testya2.o testya3.o
 all: default
 
 # OBJECTS is all .c files renamed as .o
@@ -57,6 +57,9 @@ testya1.o: testya1.asm
 
 testya2.o: testya2.asm
 	nasm -felf testya2.asm
+
+testya3.o: testya3.asm
+	nasm -felf testya3.asm
 
 shell: shell.asm
 	nasm -felf shell.asm

