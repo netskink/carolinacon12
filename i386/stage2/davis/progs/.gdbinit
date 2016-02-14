@@ -19,12 +19,13 @@
 # setups for specific programs
 #
 # args for bufferoverflow.c
-#break main
+break main
 #set args "AAAABBBBCCCC" > outfile.txt
 #
 # setup for testy1
-file testy1
-break 107
+#file testy1
+#break 107
+
 
 
 
