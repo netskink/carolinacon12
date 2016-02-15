@@ -1,6 +1,3 @@
-# very simple makefile
-
-CC = gcc
 
 # some defines in case we need them
 DEFINES = -DNORMAL
@@ -30,7 +27,7 @@ L_FLAGS = $(L_FLAGS_0) $(L_FLAGS_1)
 .PHONY: default all clean test stripdebug stripall
 
 
-default: simpleprog shell testy1 testya1.o testya2.o testya3.o testya4.o buffer_overflow2 testya5.o buffer_overflow3
+default: buffer_overflow shell testy1 testya1.o testya2.o testya3.o testya4.o buffer_overflow2 testya5.o buffer_overflow3
 
 all: default
 
