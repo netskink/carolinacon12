@@ -1,0 +1,53 @@
+goo 				.text					0x80488ac
+foo 				.text					0x80488fb
+main 				.text					0x8048911
+printf 				.text					0x804e840
+free 				.text					0x8058f90
+global_init_var 	.data 					0x80ec1c8 
+global_noninit_var 	.bss					0x80ee080 
+pBuffer 			<missing its stack>		0xbfffbec this is storage loc of var
+pBuffer 			<missing its stack>		0x80f01b0 this is its buffer
+aLocal 				<missing its stack> 	0xbffffc2
+
+
+read only code 
+.text			08048290					08048290+0007365c
+
+read/write initialized variables in .data segment
+.data			080ec1c0					080ec1c0+00000f00
+
+read only  initialized variables in .data segment
+.rodata			080bc4e0					080bc4e0+0001bfd4
+
+static allocated but uninitialized variables in data segment
+.bss			080ed0c0					080ed0c0+000013ac
+
+Stack Usage and Frame Usage
+	main
+esp 0xbffffc20
+ebp 0xbffffc38
+
+esp 0xbffffc10
+ebp 0xbffffc38
+			foo esp 0xbffffc0c mod for ret addr
+		esp 0xbffffc00
+		ebp 0xbffffc08
+
+		esp 0xbffffc00
+		ebp 0xbffffc08
+					goo esp 0xbffffbfc mod for ret addr
+				esp 0xbffffbe0
+				ebp 0xbffffbf8
+
+				esp 0xbffffbe0
+				ebp 0xbffffbf8
+
+				esp 0xbffffbfc as result of leave instr
+				ebp 0xbffffc08
+
+		esp 0xbffffc00 as result of ret instr
+		ebp 0xbffffc08
+
+		
+
+
