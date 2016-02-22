@@ -28,12 +28,12 @@ L_FLAGS_1 = -static
 L_FLAGS = $(L_FLAGS_0) $(L_FLAGS_1) 
 
 EXES = bof
-OBJECTS = bof.o
+OBJECTS = bof.o shell.o
 
 .PHONY: default all clean test 
 
 
-default: bof
+default: bof shell.o
 
 all: default
 
@@ -49,6 +49,9 @@ HEADERS = $(wildcard *.h)
 
 bof: bof.o
 	$(CC) $(L_FLAGS) -o $@ $<
+
+shell.o: shell.asm
+	nasm -f elf64 -o shell.a shell.asm
 
 clean:
 	-rm -f $(OBJECTS)

