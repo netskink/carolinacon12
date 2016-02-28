@@ -5,6 +5,18 @@
 ; This shell code is ?? bytes in length
 ; John F. Davis davisjf@gmail.com
 
+
+;  arch/ABI   instruction          syscall #   retval Notes
+;  ───────────────────────────────────────────────────────────────────
+;  x86_64     syscall              rax         rax    See below
+;
+;
+;  arch/ABI      arg1  arg2  arg3  arg4  arg5  arg6  arg7  Notes
+;  ──────────────────────────────────────────────────────────────────
+;  x86_64        rdi   rsi   rdx   r10   r8    r9    -
+;
+
+
 ;;;;;; Above this line is part of our model for how we get to our
 ;;;;;; function pointer to call based upon ascii variable decoded in read buffer.
 ; create a label so we know where to start looking when
@@ -34,13 +46,13 @@ theKracken:
 ; Load the string pointers for parm 1 and 2
 	mov rbx, rsp  ; ebx is a pointer to string
 	add rsp, 8		; point to next word
-	mov [rsp], rbx	; put pointer in the word
+	mov [esp], rbx	; put pointer in the word
 	mov rcx, rsp  ; ecx is a pointer to a pointer to string
 ; Add code to create null pointer for exec syscall
 	mov    rax, rcx ; edx will point to next location
 	add    rax, 4
 	xor    rdx, rdx
-	mov    [rax], rdx ; now edx points to a zero word
+	mov    [eax], rdx ; now edx points to a zero word
 ; Load the execv system call
 	xor rax, rax ; eax is zero again
 	mov rdx, rax

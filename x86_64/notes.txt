@@ -56,3 +56,13 @@ $ python2 -c  'print "A" * 264 + "\x7f\xff\xff\xdc\x90\x0d"[::-1] ' | hexdump -v
 To disable aslr and config yama to allow gdb to attach to process
 echo kernel.randomize_va_space=0 > /etc/sysctl.d/01_disable_aslr.conf
 echo kernel.yama.ptrace_scope=0 > /etc/sysctl.d/01_ptrace.conf
+
+
+This says that readelf -l shows stack as read/write then its not execuatable.
+Odd, I have execstack on my compile line
+
+Ahh, I need to add the line to linker as well.  FWIW, there is a tool
+called execstack which can be used to do it post install.  I could not find it.
+My earlier notes found this I need to find those.
+
+

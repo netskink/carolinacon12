@@ -14,7 +14,7 @@ C_FLAGS_1 = -fno-stack-protector
 # Executable stack
 C_FLAGS_2 = -z execstack 
 # Place holder
-C_FLAGS_3 = -m64
+C_FLAGS_3 = -m64 -D_FORTIFY_SOURCE=0
 # What we intend to use.
 C_FLAGS = $(DEFINES) $(C_FLAGS_0) $(C_FLAGS_1) $(C_FLAGS_2) $(C_FLAGS_3)
 
@@ -23,7 +23,7 @@ C_FLAGS = $(DEFINES) $(C_FLAGS_0) $(C_FLAGS_1) $(C_FLAGS_2) $(C_FLAGS_3)
 # Include debugging symbols
 L_FLAGS_0 = -ggdb 
 # Make a static executable
-L_FLAGS_1 = -static
+L_FLAGS_1 = -static -z execstack
 # What we intend to use.
 L_FLAGS = $(L_FLAGS_0) $(L_FLAGS_1) 
 
@@ -33,7 +33,7 @@ OBJECTS = bof.o shell.o
 .PHONY: default all clean test 
 
 
-default: bof shell.o
+default: bof shell.o shellbytes.txt
 
 all: default
 
@@ -50,10 +50,15 @@ HEADERS = $(wildcard *.h)
 bof: bof.o
 	$(CC) $(L_FLAGS) -o $@ $<
 
+shellbytes.txt : shell.o
+	./dohexy.sh
+
 shell.o: shell.asm
-	nasm -f elf64 -o shell.a shell.asm
+	nasm -f elf64 -o shell.o shell.asm
 
 clean:
 	-rm -f $(OBJECTS)
 	-rm -f $(EXES)
+	-rm -f shellbytes.txt
+
 
