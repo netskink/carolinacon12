@@ -23,7 +23,7 @@ C_FLAGS = $(DEFINES) $(C_FLAGS_0) $(C_FLAGS_1) $(C_FLAGS_2) $(C_FLAGS_3)
 # Include debugging symbols
 L_FLAGS_0 = -ggdb 
 # Make a static executable
-L_FLAGS_1 = -static -z execstack
+L_FLAGS_1 = -static -z execstack -fno-stack-protector
 # What we intend to use.
 L_FLAGS = $(L_FLAGS_0) $(L_FLAGS_1) 
 

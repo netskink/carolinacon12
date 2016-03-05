@@ -3,12 +3,12 @@
 #include <stdlib.h>
 
 int main(int argc, char **argv) {
-//	char buffer[256];
-	char buffer[64]; // the shell code is 50 bytes
+	//char buffer[36]; // the shell code is 36 bytes. Find the return address.
+	char buffer[40]; // the shell code is 36 bytes. Find the return address.
 	if (argc !=2) {
 		exit(0);
 	}
-	printf("%p\n", buffer);
+//	printf("%p\n", buffer);
 	strcpy(buffer, argv[1]);
 //	printf("%s\n", buffer);
 	return 0;

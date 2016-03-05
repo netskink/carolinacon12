@@ -1,0 +1,11 @@
+Problem #1
+syscall shows two forms for syscalls. One uses r0, r1, etc.  The other
+uses a1.  Either way, the assembly op codes for arm are risc like
+and register use 0x0.  Here is the opcodes for a mov instruction:
+
+e3a00001 -> mov r0, #1.
+
+If you encode this in the buffer, strcpy will truncate the 
+buffer as soon as it sees a 0x00.  :-/
+
+
