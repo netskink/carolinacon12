@@ -1,5 +1,7 @@
 Don't forget to mention that the addresses will differ based upon the process start method.
 All of my examples are running in a screen.  YM_W_V if you run otherwise.
+Also, gdb will change up pointer based upon environment variable.  See later
+notes on this.
 
 testy1.c notes
 
@@ -1058,6 +1060,7 @@ in hexdump so I print a Y and replace it with \ afterwards.
 # $ hexdump -s 0x110 -v -e'/1 "Y0x%02x"' testya3.o  > foo.txt
 $ hexdump -s 0x110 -v -e'/1 "Yx%02x"' testya3.o  > foo.txt
 $ sed -i 's/Y/\\/g'  foo.txt
+copyls /usr/include/
 
 Then I edit with vim to find the first 0x00 after the null term string for s.
 

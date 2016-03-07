@@ -1,9 +1,0 @@
-normally I use a second tty in another xterm to see output.  I don't have X working on 
-the vm so I am using a text file to log results.  Run the code in gdb like so:
-(gdb) run > output.txt
-The tail -f output.txt in a second virtual terminal using alt-arrow key left or right
-to switch terminals.  Since the process owner is not the same in both logins redirect
-to the second terminal does not work.  I even tried to sudo via root to see if that 
-would work and it did not.  TBH I'm not sure why since I figured the userid would be
-the same.  I guess the process id is getty or something.
-

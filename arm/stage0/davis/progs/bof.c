@@ -3,8 +3,7 @@
 #include <stdlib.h>
 
 int main(int argc, char **argv) {
-	//char buffer[36]; // the shell code is 36 bytes. Find the return address.
-	char buffer[40]; // the shell code is 36 bytes. Find the return address.
+	char buffer[36]; // the shell code is 36 bytes. Find the return address.
 	if (argc !=2) {
 		exit(0);
 	}

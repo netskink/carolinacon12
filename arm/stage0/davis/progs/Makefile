@@ -14,7 +14,8 @@ C_FLAGS_1 = -fno-stack-protector
 # Executable stack
 C_FLAGS_2 = -z execstack 
 # Place holder
-C_FLAGS_3 = -D_FORTIFY_SOURCE=0
+C_FLAGS_3 = -D_FORTIFY_SOURCE=0 
+#C_FLAGS_3 = -D_FORTIFY_SOURCE=0 -mthumb
 # What we intend to use.
 C_FLAGS = $(DEFINES) $(C_FLAGS_0) $(C_FLAGS_1) $(C_FLAGS_2) $(C_FLAGS_3)
 

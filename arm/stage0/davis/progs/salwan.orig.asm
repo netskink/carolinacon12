@@ -72,7 +72,8 @@ _start:
         /* Either works, but swi 0 will end the buffer when strcpy used */
 		/* hmm. this did not work when i did the shell code bit though */
         /* svc     1  */ 
-        swi     #0 
+        /* swi     #0 */
+        swi     #1 
 
 /* modified this to have a null term zero */
 /* he had a // here, but used 0xa offset. 0xa will break up input buffer */

@@ -15,14 +15,14 @@
 
 
 #install
-qemu-system-i386 -boot d -cdrom archlinux-2015.12.01-dual.iso -m 512 -hda hda.img
+#qemu-system-i386 -boot d -cdrom archlinux-2015.12.01-dual.iso -m 512 -hda hda.img
 #exit
 
 # fsck this. Lets try this
 # From the host, do :
 # $ ssh davis@localhost -p 2222
 # to get a shell on the guest.
-#qemu-system-i386 hda.img -m 512 -redir tcp:2222::22
+qemu-system-i386 hda.img -m 512 -redir tcp:2222::22
 #exit
 
 # This allows two networking between the guest and host.  Need to
